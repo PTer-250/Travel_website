@@ -21,11 +21,6 @@ const router = createRouter({
       component: () => import('../pages/FacilitiesPage.vue'),
     },
     {
-      path: '/diaries',
-      name: 'diaries',
-      component: () => import('../pages/DiariesPage.vue'),
-    },
-    {
       path: '/diaries/new',
       name: 'diary-create',
       component: () => import('../pages/DiaryEditorPage.vue'),

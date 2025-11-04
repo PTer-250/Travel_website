@@ -19,6 +19,11 @@ export interface DiaryMediaUpload extends DiaryMediaPlaceholder {
   file: File
 }
 
+// New: content blocks for order-safe submission
+export type DiaryContentBlock =
+  | { type: 'text'; text: string }
+  | { type: 'media'; placeholder: string; media_type: DiaryMediaType }
+
 export interface DiaryMediaItem {
   id: number
   placeholder: string
@@ -91,6 +96,8 @@ export interface DiaryCreateRequest {
   tags?: string[]
   media_placeholders?: DiaryMediaPlaceholder[]
   status?: DiaryStatus
+  // Optional: if provided, backend will use these blocks to build content in exact order
+  content_blocks?: DiaryContentBlock[]
 }
 
 /**

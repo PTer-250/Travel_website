@@ -27,6 +27,7 @@ import type {
   DiaryMediaType,
   DiaryMediaUpload,
   DiaryStatus,
+  DiaryContentBlock,
 } from '../types/diary'
 import type { RegionSearchResult } from '../types/api'
 
@@ -239,10 +240,44 @@ const handleMediaFilesSelected = (event: Event) => {
   files.forEach((file) => {
     const mediaType: DiaryMediaType = file.type.startsWith('video') ? 'video' : 'image'
     const placeholder = generatePlaceholder(mediaType)
+    // 生成与占位符绑定的安全文件名，避免泄露用户本地文件名
+    const getSafeFilename = (
+      f: File,
+      ph: string,
+      type: DiaryMediaType
+    ): string => {
+      // 优先依据 MIME 推断扩展名
+      const mime = (f.type || '').toLowerCase()
+      const mimeExtMap: Record<string, string> = {
+        'image/jpeg': 'jpg',
+        'image/jpg': 'jpg',
+        'image/png': 'png',
+        'image/gif': 'gif',
+        'image/webp': 'webp',
+        'image/avif': 'avif',
+        'video/mp4': 'mp4',
+        'video/webm': 'webm',
+        'video/ogg': 'ogg',
+        'video/quicktime': 'mov',
+      }
+      let ext = mimeExtMap[mime]
+      if (!ext) {
+        // 回退：仅提取原名中的扩展名，不保留文件名主体
+        const name = f.name || ''
+        const dot = name.lastIndexOf('.')
+        const rawExt = dot >= 0 ? name.slice(dot + 1).toLowerCase() : ''
+        // 白名单中的常见扩展，否则给出缺省
+        const allowed = new Set(['jpg', 'jpeg', 'png', 'gif', 'webp', 'avif', 'mp4', 'webm', 'ogg', 'mov'])
+        ext = allowed.has(rawExt) ? rawExt : (type === 'video' ? 'mp4' : 'jpg')
+      }
+      return `${ph}.${ext}`
+    }
+    const safeFilename = getSafeFilename(file, placeholder, mediaType)
     const upload: DiaryMediaUpload = {
       placeholder,
       media_type: mediaType,
-      filename: file.name || `${mediaType}-${mediaUploads.value.length + 1}`,
+      // 使用安全文件名，杜绝原始文件名外泄
+      filename: safeFilename,
       content_type: file.type || undefined,
       file,
     }
@@ -257,6 +292,7 @@ const handleMediaFilesSelected = (event: Event) => {
         placeholder,
         type: mediaType,
         src: previewUrl,
+        // 仅用于内部数据，不进行可视化渲染
         filename: upload.filename,
       })
       .run()
@@ -290,7 +326,7 @@ const resetForm = () => {
 
 const prepareSubmissionContent = () => {
   if (!tiptapEditor.value) {
-    return { html: '', serialized: '' }
+    return { html: '', serialized: '', blocks: [] as DiaryContentBlock[] }
   }
 
   const html = tiptapEditor.value.getHTML()
@@ -298,8 +334,33 @@ const prepareSubmissionContent = () => {
   syncMediaUploadsWithContent(tiptapEditor.value)
 
   const serialized = serializeContentForSubmission(html)
+  // Build content blocks from serialized string to preserve exact order
+  const blocks: DiaryContentBlock[] = []
+  const regex = /\{\{media:([a-zA-Z0-9_.-]+)\}\}/g
+  let lastIndex = 0
+  let m: RegExpExecArray | null
+  const pushText = (text: string) => {
+    if (text.length > 0) {
+      blocks.push({ type: 'text', text })
+    }
+  }
+  while ((m = regex.exec(serialized)) !== null) {
+    const start = m.index
+    if (start > lastIndex) {
+      pushText(serialized.slice(lastIndex, start))
+    }
+  const ph = (m[1] ?? '') as string
+    // Find media type from mediaUploads map
+    const item = mediaUploads.value.find((it) => it.placeholder === ph)
+    const mediaType: DiaryMediaType = item?.type ?? 'image'
+    blocks.push({ type: 'media', placeholder: ph, media_type: mediaType })
+    lastIndex = regex.lastIndex
+  }
+  if (lastIndex < serialized.length) {
+    pushText(serialized.slice(lastIndex))
+  }
 
-  return { html, serialized }
+  return { html, serialized, blocks }
 }
 
 const handleSubmit = async () => {
@@ -318,7 +379,7 @@ const handleSubmit = async () => {
     return
   }
 
-  const { serialized } = prepareSubmissionContent()
+  const { serialized, blocks } = prepareSubmissionContent()
   if (plainTextLength.value < 10 || serialized.length < 10) {
     return
   }
@@ -337,6 +398,7 @@ const handleSubmit = async () => {
     tags: tags.value,
     media_placeholders: mediaPlaceholders,
     status: form.status,
+    content_blocks: blocks,
   }
 
   try {
@@ -649,8 +711,9 @@ onBeforeUnmount(() => {
 }
 
 .editor-shell :deep(.editor-media-block) {
-  display: inline-flex;
-  flex-direction: column;
+  display: block; /* 避免与段落内联导致换行异常 */
+  width: 100%;
+  box-sizing: border-box;
   gap: 0.5rem;
   padding: 0.75rem;
   border-radius: 1rem;
@@ -661,7 +724,8 @@ onBeforeUnmount(() => {
 
 .editor-shell :deep(.editor-media-block img),
 .editor-shell :deep(.editor-media-block video) {
-  max-width: 420px;
+  max-width: 100%;
+  height: auto;
   border-radius: 0.75rem;
   background: #0f172a;
 }

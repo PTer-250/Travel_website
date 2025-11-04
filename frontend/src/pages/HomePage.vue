@@ -1,361 +1,217 @@
 <script setup lang="ts">
-import { computed, reactive, watch } from 'vue'
-import { storeToRefs } from 'pinia'
+import { onMounted, computed } from 'vue'
+import { useRouter } from 'vue-router'
 import PageSection from '../components/ui/PageSection.vue'
-import ErrorAlert from '../components/ui/ErrorAlert.vue'
 import LoadingIndicator from '../components/ui/LoadingIndicator.vue'
+import ErrorAlert from '../components/ui/ErrorAlert.vue'
 import EmptyState from '../components/ui/EmptyState.vue'
-import { fetchRegionRecommendations } from '../services/api'
-import type { RecommendationSort, RegionRecommendationItem, RegionType } from '../types/api'
-import { INTEREST_SUGGESTIONS, SAMPLE_REGION_OPTIONS } from '../constants/demoOptions'
-import { usePreferencesStore, createRecommendationDefaults } from '../stores/preferences'
+import DiaryCard from '../components/diary/DiaryCard.vue'
 import { useApiRequest } from '../composables/useApiRequest'
+import { fetchDiaryRecommendations } from '../services/api'
+import { useDiariesStore } from '../stores/diaries'
+import type { DiaryListItem } from '../types/diary'
 
-interface RecommendationForm {
-  search: string
-  interestsText: string
-  limit: number
-  sortBy: RecommendationSort
-  regionType: RegionType | ''
-  interestsOnly: boolean
+const diariesStore = useDiariesStore()
+const router = useRouter()
+
+// 筛选选项
+const filters = [
+  { key: 'hybrid', label: '✨ 智能推荐' },
+  { key: 'popularity', label: '🔥 热门优先' },
+  { key: 'rating', label: '⭐ 评分最高' },
+  { key: 'latest', label: '🕒 最新发布' },
+]
+
+// 防抖搜索
+let searchTimeout: number | null = null
+const debouncedSearch = () => {
+  if (searchTimeout) {
+    clearTimeout(searchTimeout)
+  }
+  searchTimeout = setTimeout(() => {
+    handleFiltersChanged()
+  }, 300)
 }
 
-const sortOptions: { label: string; value: RecommendationSort }[] = [
-  { label: '综合评分优先', value: 'hybrid' },
-  { label: '人气优先', value: 'popularity' },
-  { label: '评分优先', value: 'rating' },
-]
+// API request state for recommendations
+const {
+  data: recommendationsData,
+  error: recommendationsError,
+  loading: recommendationsLoading,
+  execute: loadRecommendations,
+} = useApiRequest(fetchDiaryRecommendations)
 
-const regionTypeOptions: { label: string; value: RegionType | '' }[] = [
-  { label: '不限类型', value: '' },
-  { label: '景区 (scenic)', value: 'scenic' },
-  { label: '校园 (campus)', value: 'campus' },
-]
-
-const preferencesStore = usePreferencesStore()
-const { recommendation } = storeToRefs(preferencesStore)
-
-const form = reactive<RecommendationForm>({
-  search: '',
-  interestsText: '',
-  limit: 10,
-  sortBy: 'hybrid',
-  regionType: '',
-  interestsOnly: false,
+// Computed properties for current data
+const currentData = computed(() => {
+  // For recommendations, create a unified interface
+  const recData = recommendationsData.value
+  if (recData) {
+    return {
+      ...recData,
+      total: recData.total_candidates, // Use total_candidates as total for consistency
+    }
+  }
+  return null
 })
 
-const hydrateForm = (prefs = recommendation.value) => {
-  form.search = prefs.search
-  form.limit = prefs.limit
-  form.sortBy = prefs.sortBy
-  form.regionType = prefs.regionType
-  form.interestsOnly = prefs.interestsOnly
-  form.interestsText = prefs.interests.join('、')
-}
+const error = computed(() => recommendationsError.value)
+const loading = computed(() => recommendationsLoading.value)
 
-watch(
-  recommendation,
-  (value) => {
-    hydrateForm(value)
-  },
-  { immediate: true }
-)
+// Unified diary items for template
+const diaryItems = computed(() => {
+  if (!currentData.value) return []
+  return currentData.value.items.map((item: any) => {
+    return {
+      diary: item.diary as DiaryListItem,
+      recommendationScore: item.score,
+      showCompressionStatus: false,
+      animationThumbnail: undefined,
+    }
+  })
+})
 
-const interestList = computed(() =>
-  form.interestsText
-    .split(/[,，;；\s\n]+/u)
-    .map((item) => item.trim())
-    .filter(Boolean)
-)
+// Load initial data
+onMounted(async () => {
+  await handleFiltersChanged()
+})
 
-const defaultPrefs = createRecommendationDefaults()
-
-const hasActiveFilters = computed(() =>
-  Boolean(
-    form.search ||
-      form.regionType ||
-      form.interestsOnly ||
-      interestList.value.length > 0 ||
-      form.limit !== defaultPrefs.limit ||
-      form.sortBy !== defaultPrefs.sortBy
-  )
-)
-
-const { data, error, loading, execute } = useApiRequest(fetchRegionRecommendations)
-
-const runQuery = async () => {
-  const payload = {
-    limit: form.limit,
-    sortBy: form.sortBy,
-    search: form.search || undefined,
-    regionType: form.regionType || undefined,
-    interestsOnly: form.interestsOnly,
-    interests: interestList.value,
-  }
-
-  await execute(payload)
-  preferencesStore.updateRecommendation({
-    limit: form.limit,
-    sortBy: form.sortBy,
-    search: form.search,
-    regionType: form.regionType,
-    interestsOnly: form.interestsOnly,
-    interests: interestList.value,
+// Handle filter changes
+const handleFiltersChanged = async () => {
+  await loadRecommendations({
+    limit: 20,
+    sort_by: diariesStore.filters.sortBy,
+    region_id: diariesStore.filters.regionId || undefined,
   })
 }
 
-const toggleInterest = (interest: string) => {
-  const set = new Set(interestList.value)
-  if (set.has(interest)) {
-    set.delete(interest)
-  } else {
-    set.add(interest)
-  }
-  form.interestsText = Array.from(set).join('、')
+// Load more function
+const loadMore = async () => {
+  // 实现加载更多功能
+  await handleFiltersChanged()
 }
 
-const applyRegionSample = (regionId: number) => {
-  const sample = SAMPLE_REGION_OPTIONS.find((item) => item.id === regionId)
-  if (!sample) return
-  form.search = sample.name
-  form.regionType = sample.type as RegionType
+// Handle diary card click
+const handleDiaryClick = (diary: DiaryListItem) => {
+  void router.push({ name: 'diary-detail', params: { id: diary.id } })
 }
 
-const resetFilters = () => {
-  const defaults = createRecommendationDefaults()
-  preferencesStore.updateRecommendation(defaults)
-  hydrateForm(defaults)
+// Handle create diary button
+const handleCreateDiary = () => {
+  void router.push({ name: 'diary-create' })
 }
-
-const sortedItems = computed<RegionRecommendationItem[]>(() => data.value?.items ?? [])
-const generatedAt = computed(() => data.value?.generated_at ?? null)
-const totalCount = computed(() => data.value?.total_candidates ?? 0)
 </script>
 
 <template>
   <div class="space-y-6">
-    <PageSection
-      title="旅游目的地推荐"
-      description="按照旅游热度、评价和个人兴趣选择旅游目的地，支持关键词查询和多维度排序。"
-    >
-      <form class="rounded-2xl border border-slate-200 bg-white p-6 shadow-lg" @submit.prevent="runQuery">
-        <div class="grid gap-5 md:grid-cols-2">
-          <label class="flex flex-col gap-2 text-sm font-semibold text-slate-700">
-            <span class="flex items-center gap-2">
-              🔍 搜索关键词
-            </span>
-            <input
-              v-model="form.search"
-              type="text"
-              placeholder="输入城市、景点或关键字"
-              class="rounded-xl border-2 border-slate-200 px-4 py-2.5 transition focus:border-primary"
-            />
-          </label>
+    <!-- 页面标题区域 -->
+    <div class="relative overflow-hidden rounded-3xl bg-gradient-to-r from-pink-500 via-red-500 to-yellow-500 p-8 text-white">
+      <div class="relative z-10">
+        <h1 class="text-3xl font-bold mb-2">发现精彩旅程</h1>
+        <p class="text-pink-100 text-lg">探索全球旅游日记，找到你的下一个目的地</p>
+      </div>
+      <!-- 背景装饰 -->
+      <div class="absolute right-0 top-0 h-32 w-32 -translate-y-8 translate-x-8 rounded-full bg-white/10 blur-3xl"></div>
+      <div class="absolute bottom-0 right-0 h-24 w-24 translate-y-8 translate-x-8 rounded-full bg-white/5 blur-2xl"></div>
+    </div>
 
-          <label class="flex flex-col gap-2 text-sm font-semibold text-slate-700">
-            <span class="flex items-center gap-2">
-              📊 推荐数量
-            </span>
-            <input 
-              v-model.number="form.limit" 
-              type="number" 
-              min="1" 
-              max="50" 
-              class="rounded-xl border-2 border-slate-200 px-4 py-2.5 transition focus:border-primary"
-            />
-          </label>
-
-          <label class="flex flex-col gap-2 text-sm font-semibold text-slate-700">
-            <span class="flex items-center gap-2">
-              📈 排序方式
-            </span>
-            <select v-model="form.sortBy" class="rounded-xl border-2 border-slate-200 px-4 py-2.5 transition focus:border-primary">
-              <option v-for="option in sortOptions" :key="option.value" :value="option.value">
-                {{ option.label }}
-              </option>
-            </select>
-          </label>
-
-          <label class="flex flex-col gap-2 text-sm font-semibold text-slate-700">
-            <span class="flex items-center gap-2">
-              🏷️ 区域类型
-            </span>
-            <select v-model="form.regionType" class="rounded-xl border-2 border-slate-200 px-4 py-2.5 transition focus:border-primary">
-              <option v-for="option in regionTypeOptions" :key="option.value" :value="option.value">
-                {{ option.label }}
-              </option>
-            </select>
-          </label>
-
-          <div class="flex flex-col gap-3 md:col-span-2">
-            <label class="text-sm font-semibold text-slate-700">
-              <span class="flex items-center gap-2">
-                💡 兴趣标签
-              </span>
-            </label>
-            <textarea
-              v-model="form.interestsText"
-              rows="2"
-              placeholder="以逗号、空格或换行分隔，例如：美食、自然、文化"
-              class="rounded-xl border-2 border-slate-200 px-4 py-3 transition focus:border-primary"
-            />
-            <div class="flex flex-wrap items-center gap-2">
-              <span class="text-xs font-medium text-slate-500">快捷选择：</span>
-              <button
-                v-for="interest in INTEREST_SUGGESTIONS"
-                :key="interest"
-                type="button"
-                class="rounded-full border-2 px-3 py-1.5 text-xs font-medium transition-all"
-                :class="
-                  interestList.includes(interest)
-                    ? 'border-primary bg-primary text-white shadow-md shadow-primary/30'
-                    : 'border-slate-200 bg-white text-slate-600 hover:border-primary hover:text-primary'
-                "
-                @click="toggleInterest(interest)"
-              >
-                {{ interest }}
-              </button>
-            </div>
+    <!-- 搜索和筛选栏 -->
+    <div class="sticky top-20 z-40 -mx-4 bg-white/80 px-4 pb-4 pt-4 backdrop-blur-lg">
+      <div class="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+        <!-- 搜索栏 -->
+        <div class="relative flex-1 max-w-md">
+          <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+            <svg class="h-5 w-5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+            </svg>
           </div>
-
-          <label class="flex items-center gap-3 text-sm font-semibold text-slate-700 md:col-span-2">
-            <input v-model="form.interestsOnly" type="checkbox" class="h-5 w-5 rounded border-2 border-slate-300 text-primary focus:ring-2 focus:ring-primary/30" />
-            <span>只显示匹配兴趣的区域</span>
-          </label>
-
-          <div class="flex flex-col gap-3 rounded-xl bg-slate-50 p-4 md:col-span-2">
-            <span class="text-xs font-semibold text-slate-600">⚡ 快速示例</span>
-            <div class="flex flex-wrap gap-2">
-              <button
-                v-for="sample in SAMPLE_REGION_OPTIONS"
-                :key="sample.id"
-                type="button"
-                class="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-600 shadow-sm transition hover:border-primary hover:text-primary hover:shadow"
-                @click="applyRegionSample(sample.id)"
-              >
-                {{ sample.name }} · {{ sample.type === 'scenic' ? '🏞️' : '🏫' }} · #{{ sample.id }}
-              </button>
-            </div>
-          </div>
-
-          <div class="flex flex-wrap items-center gap-3 border-t border-slate-100 pt-5 md:col-span-2">
-            <button
-              type="submit"
-              class="rounded-xl bg-gradient-to-r from-primary to-blue-600 px-6 py-3 text-sm font-bold text-white shadow-lg shadow-primary/30 transition hover:shadow-xl hover:shadow-primary/40 disabled:from-slate-300 disabled:to-slate-400 disabled:shadow-none"
-              :disabled="loading"
-            >
-              {{ loading ? '🔄 加载中…' : '🚀 获取推荐' }}
-            </button>
-            <button
-              type="button"
-              class="rounded-xl border-2 border-slate-300 bg-white px-6 py-3 text-sm font-semibold text-slate-600 transition hover:border-primary hover:text-primary"
-              @click="resetFilters"
-            >
-              🔄 重置条件
-            </button>
-            <span v-if="hasActiveFilters" class="text-xs font-medium text-slate-500">
-              ✓ 已应用筛选条件
-            </span>
-          </div>
-        </div>
-      </form>
-    </PageSection>
-
-    <PageSection
-      title="推荐结果"
-      :description="
-        data
-          ? `共 ${data.total_candidates} 条候选，按 ${
-              form.sortBy === 'hybrid' ? '综合评分' : form.sortBy === 'popularity' ? '人气' : '评分'
-            } 排序。`
-          : '提交条件后即可查看候选结果。'
-      "
-    >
-      <template v-if="error">
-        <ErrorAlert :message="error.message" />
-      </template>
-      <template v-else-if="loading">
-        <LoadingIndicator label="正在加载推荐列表，请稍候…" />
-      </template>
-      <template v-else-if="sortedItems.length">
-        <div class="flex flex-col gap-3 text-xs text-slate-500 md:flex-row md:items-center md:justify-between">
-          <div>
-            请求上次更新时间：
-            <span class="font-medium text-slate-700">
-              {{ generatedAt ? new Date(generatedAt).toLocaleString() : '—' }}
-            </span>
-          </div>
-          <div>返回数量：{{ sortedItems.length }} / {{ totalCount }}</div>
+          <input
+            v-model="diariesStore.filters.fullTextSearch"
+            type="text"
+            placeholder="搜索日记、地点、标签..."
+            class="block w-full pl-10 pr-4 py-3 border border-slate-200 rounded-xl bg-white/90 backdrop-blur-sm focus:border-pink-500 focus:ring-2 focus:ring-pink-500/20 transition"
+            @input="debouncedSearch"
+          />
         </div>
 
-        <div class="grid gap-5 lg:grid-cols-2">
-          <article
-            v-for="item in sortedItems"
-            :key="item.region.id"
-            class="group relative flex h-full flex-col justify-between overflow-hidden rounded-2xl border border-slate-200 bg-white p-6 shadow-md transition-all duration-300 hover:-translate-y-2 hover:shadow-xl"
+        <!-- 筛选按钮组 -->
+        <div class="flex flex-wrap gap-2">
+          <button
+            v-for="filter in filters"
+            :key="filter.key"
+            @click="diariesStore.setSortBy(filter.key as any)"
+            class="px-4 py-2 rounded-full text-sm font-medium transition-all"
+            :class="diariesStore.filters.sortBy === filter.key
+              ? 'bg-gradient-to-r from-pink-500 to-red-500 text-white shadow-lg'
+              : 'bg-slate-100 text-slate-600 hover:bg-slate-200'"
           >
-            <!-- 装饰性渐变背景 -->
-            <div class="absolute right-0 top-0 h-32 w-32 -translate-y-8 translate-x-8 rounded-full bg-gradient-to-br from-primary/5 to-blue-500/10 blur-3xl transition-transform group-hover:scale-150"></div>
-            
-            <div class="relative space-y-4">
-              <div class="flex items-start justify-between gap-4">
-                <div class="flex-1">
-                  <h3 class="text-xl font-bold text-slate-900 transition group-hover:text-primary">
-                    {{ item.region.name }}
-                  </h3>
-                  <p class="mt-1 text-xs text-slate-500">
-                    <span class="font-medium">ID: {{ item.region.id }}</span>
-                    <span class="mx-2">·</span>
-                    <span>{{ item.region.city ?? '未知城市' }}</span>
-                  </p>
-                </div>
-                <span class="flex-shrink-0 rounded-xl bg-gradient-to-br from-primary/10 to-blue-500/10 px-4 py-2 text-xs font-bold text-primary shadow-sm">
-                  {{ item.region.type === 'scenic' ? '🏞️ 景区' : '🏫 校园' }}
-                </span>
-              </div>
-
-              <div class="flex items-center gap-4 text-sm">
-                <div class="flex items-center gap-1.5">
-                  <span class="text-yellow-500">⭐</span>
-                  <span class="font-semibold text-slate-700">{{ item.region.rating.toFixed(1) }}</span>
-                  <span class="text-slate-400">评分</span>
-                </div>
-                <div class="h-4 w-px bg-slate-200"></div>
-                <div class="flex items-center gap-1.5">
-                  <span class="text-red-500">🔥</span>
-                  <span class="font-semibold text-slate-700">{{ item.region.popularity }}</span>
-                  <span class="text-slate-400">人气</span>
-                </div>
-              </div>
-
-              <p v-if="item.region.description" class="text-sm leading-relaxed text-slate-600">
-                {{ item.region.description.length > 100 ? item.region.description.slice(0, 100) + '...' : item.region.description }}
-              </p>
-            </div>
-
-            <div class="relative mt-5 flex flex-wrap items-center gap-2 border-t border-slate-100 pt-4">
-              <span class="rounded-lg bg-blue-50 px-3 py-1.5 text-xs font-semibold text-blue-700">
-                匹配度 {{ item.score.toFixed(2) }}
-              </span>
-              <span class="rounded-lg bg-slate-50 px-3 py-1.5 text-xs font-medium text-slate-600">
-                基础分 {{ item.base_score.toFixed(2) }}
-              </span>
-              <template v-if="item.interest_matches.length">
-                <span v-for="tag in item.interest_matches" :key="tag" class="rounded-lg bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-700">
-                  ✓ {{ tag }}
-                </span>
-              </template>
-            </div>
-          </article>
+            {{ filter.label }}
+          </button>
         </div>
-      </template>
-      <template v-else>
-        <EmptyState
-          title="暂无推荐结果"
-          description="请调整筛选条件后再次尝试，或使用上方示例快速填充参数。"
-          icon="🧭"
-        />
-      </template>
-    </PageSection>
+
+        <!-- 发布日记按钮 -->
+        <button
+          @click="handleCreateDiary"
+          class="flex items-center gap-2 rounded-full bg-gradient-to-r from-pink-500 to-red-500 px-6 py-3 text-white font-medium shadow-lg hover:shadow-xl transition-all"
+        >
+          <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+          </svg>
+          发布日记
+        </button>
+      </div>
+    </div>
+
+    <!-- 统计信息 -->
+    <div class="flex items-center justify-between text-sm text-slate-600 mb-4">
+      <div class="flex items-center gap-4">
+        <span class="font-medium">找到 {{ currentData?.total || 0 }} 篇精彩日记</span>
+      </div>
+      <div class="text-slate-400">
+        {{ {
+          hybrid: '✨ 智能推荐',
+          popularity: '🔥 热门优先',
+          rating: '⭐ 评分最高',
+          latest: '🕒 最新发布'
+        }[diariesStore.filters.sortBy] }}
+      </div>
+    </div>
+
+    <!-- Loading State -->
+    <LoadingIndicator v-if="loading" message="正在加载精彩内容..." />
+
+    <!-- Error State -->
+    <ErrorAlert v-else-if="error" :message="error.message" />
+
+    <!-- Empty State -->
+    <EmptyState
+      v-else-if="!currentData || currentData.items.length === 0"
+      icon="🌟"
+      title="还没有精彩日记"
+      message="成为第一个分享精彩旅程的人吧！"
+    />
+
+    <!-- Diary Grid -->
+    <div v-else class="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+      <DiaryCard
+        v-for="item in diaryItems"
+        :key="item.diary.id"
+        :diary="item.diary"
+        :show-compression-status="item.showCompressionStatus"
+        :recommendation-score="item.recommendationScore"
+        :animation-thumbnail="item.animationThumbnail"
+        @click="handleDiaryClick"
+      />
+    </div>
+
+    <!-- 加载更多 -->
+    <div v-if="currentData && currentData.items.length > 0" class="flex justify-center pt-8">
+      <button
+        class="rounded-full border-2 border-pink-200 px-8 py-3 text-pink-600 font-medium hover:bg-pink-50 transition-colors"
+        @click="loadMore"
+        :disabled="loading"
+      >
+        {{ loading ? '加载中...' : '加载更多' }}
+      </button>
+    </div>
   </div>
 </template>

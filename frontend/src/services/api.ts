@@ -275,6 +275,10 @@ export const createDiary = async (
     formData.append('media_manifest', JSON.stringify(manifest))
   }
 
+  if (request.content_blocks && request.content_blocks.length > 0) {
+    formData.append('content_blocks', JSON.stringify(request.content_blocks))
+  }
+
   for (const media of mediaUploads) {
     formData.append('media_files', media.file, media.filename)
   }

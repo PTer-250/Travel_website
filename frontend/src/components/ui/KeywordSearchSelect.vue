@@ -47,6 +47,7 @@ const isOpen = ref(false)
 const suggestions = ref<SearchOption[]>([])
 const loading = ref(false)
 const errorMessage = ref<string | null>(null)
+const dropdownPosition = ref({ left: 0, top: 0 })
 let requestToken = 0
 let timeoutHandle: number | null = null
 
@@ -66,6 +67,36 @@ const closeDropdown = () => {
 const openDropdown = () => {
   if (props.disabled) return
   isOpen.value = true
+  calculateDropdownPosition()
+}
+
+const calculateDropdownPosition = () => {
+  if (!rootRef.value || !inputRef.value) return
+  
+  const inputRect = inputRef.value.getBoundingClientRect()
+  const viewportWidth = window.innerWidth
+  const viewportHeight = window.innerHeight
+  
+  let left = inputRect.left
+  let top = inputRect.bottom + 4
+  
+  // 检查是否超出右边界
+  const dropdownWidth = 400 // 预估宽度
+  if (left + dropdownWidth > viewportWidth - 20) {
+    left = viewportWidth - dropdownWidth - 20
+  }
+  
+  // 确保不超出左边界
+  if (left < 20) {
+    left = 20
+  }
+  
+  // 检查是否超出下边界，如果是则显示在上方
+  if (top + 300 > viewportHeight - 20) {
+    top = inputRect.top - 4
+  }
+  
+  dropdownPosition.value = { left, top }
 }
 
 const scheduleSearch = (keyword: string) => {
@@ -155,6 +186,12 @@ const handleKeydown = (event: KeyboardEvent) => {
   }
 }
 
+const handleResize = () => {
+  if (isOpen.value) {
+    calculateDropdownPosition()
+  }
+}
+
 watch(
   () => props.modelValue,
   (value) => {
@@ -178,11 +215,13 @@ watch(
 onMounted(() => {
   document.addEventListener('mousedown', handleDocumentClick)
   document.addEventListener('keydown', handleKeydown)
+  window.addEventListener('resize', handleResize)
 })
 
 onBeforeUnmount(() => {
   document.removeEventListener('mousedown', handleDocumentClick)
   document.removeEventListener('keydown', handleKeydown)
+  window.removeEventListener('resize', handleResize)
   clearPending()
 })
 </script>
@@ -211,7 +250,14 @@ onBeforeUnmount(() => {
       </button>
     </div>
     <transition name="dropdown-fade">
-      <div v-if="isOpen && !disabled" class="dropdown">
+      <div 
+        v-if="isOpen && !disabled" 
+        class="dropdown"
+        :style="{
+          left: dropdownPosition.left + 'px',
+          top: dropdownPosition.top + 'px'
+        }"
+      >
         <div v-if="searchTerm.trim().length < minLength" class="dropdown-message">
           {{ emptyText }}
         </div>
@@ -289,15 +335,14 @@ onBeforeUnmount(() => {
 }
 
 .dropdown {
-  position: absolute;
-  inset-inline-start: 0;
-  top: calc(100% + 4px);
-  width: 100%;
+  position: fixed;
+  min-width: 300px;
+  max-width: 500px;
   border-radius: 0.85rem;
   border: 1px solid rgba(148, 163, 184, 0.4);
   background: rgba(255, 255, 255, 0.98);
   box-shadow: 0 18px 40px -35px rgba(15, 23, 42, 0.45);
-  z-index: 20;
+  z-index: 9999;
   overflow: hidden;
 }
 

@@ -36,7 +36,7 @@ class MapDataService:
         self._session = session
 
     async def list_tiles(self) -> List[MapTileSummary]:
-        result = await self._session.exec(select(Region))
+        result = await self._session.execute(select(Region))
         regions = result.all()
         index = self._load_index()
         summaries: List[MapTileSummary] = []

@@ -51,11 +51,12 @@ const DiaryMedia = Node.create({
         },
       },
       filename: {
+        // 保留为上传与后端关联所需，但不用于可视化渲染
         default: null,
         renderHTML: (attributes) =>
           attributes.filename ? { 'data-filename': attributes.filename } : {},
         parseHTML: (element: HTMLElement) =>
-          element.getAttribute('data-filename') ?? element.querySelector('figcaption')?.textContent ?? null,
+          element.getAttribute('data-filename') ?? null,
       },
     }
   },
@@ -65,7 +66,7 @@ const DiaryMedia = Node.create({
   },
 
   renderHTML({ HTMLAttributes }) {
-    const { placeholder, type, src, filename } = HTMLAttributes as DiaryMediaAttrs
+    const { placeholder, type, src } = HTMLAttributes as DiaryMediaAttrs
     const baseAttrs = mergeAttributes(HTMLAttributes, {
       'data-placeholder': placeholder,
       'data-media-type': type,
@@ -76,12 +77,9 @@ const DiaryMedia = Node.create({
     const mediaChild =
       type === 'video'
         ? ['video', mergeAttributes({ src: src ?? '', controls: '', preload: 'metadata' })]
-        : ['img', mergeAttributes({ src: src ?? '', alt: filename ?? '' })]
+        : ['img', mergeAttributes({ src: src ?? '', alt: '' })]
 
     const children: any[] = [mediaChild]
-    if (filename) {
-      children.push(['figcaption', filename])
-    }
 
     return ['figure', baseAttrs, ...children]
   },
@@ -107,7 +105,7 @@ const DiaryMedia = Node.create({
         const typeValue = attrs.type ?? (figure.dataset.mediaType as DiaryMediaAttrs['type']) ?? 'image'
         const previousSrc = figure.dataset.previewSrc ?? ''
         const srcValue = attrs.src ?? previousSrc
-        const filenameValue = attrs.filename ?? figure.dataset.filename ?? ''
+  const filenameValue = attrs.filename ?? figure.dataset.filename ?? ''
 
         figure.dataset.placeholder = placeholderValue
         figure.dataset.mediaType = typeValue
@@ -130,16 +128,12 @@ const DiaryMedia = Node.create({
           if (srcValue) {
             img.src = srcValue
           }
-          img.alt = filenameValue || ''
+          img.alt = ''
           img.classList.add('editor-media-asset')
           figure.append(img)
         }
 
-        if (filenameValue) {
-          const caption = document.createElement('figcaption')
-          caption.textContent = filenameValue
-          figure.append(caption)
-        }
+        // 不再渲染文件名为 figcaption，避免文件名出现在正文中
       }
 
       const figure = document.createElement('figure')

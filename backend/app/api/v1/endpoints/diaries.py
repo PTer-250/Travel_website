@@ -136,6 +136,44 @@ def _extract_content_preview(diary, max_length: int = _PREVIEW_MAX_LENGTH) -> st
     return text
 
 
+_FIGURE_PLACEHOLDER_RE = re.compile(r'<figure[^>]*data-placeholder="([^"]+)"[^>]*>[\s\S]*?<\/figure>', re.IGNORECASE)
+
+def _html_to_placeholder_text(html_text: str) -> str:
+    """Convert HTML with <figure data-placeholder> to plain text with {{media:...}} tokens.
+
+    This mirrors the frontend serialization so that server accepts both raw HTML and
+    serialized text, preserving user-intended media positions.
+    """
+    if not html_text:
+        return ""
+
+    working = html_text
+
+    # Replace figure blocks with placeholder tokens
+    def _repl(m: re.Match) -> str:
+        ph = m.group(1)
+        return f"\n{{{{media:{ph}}}}}\n"
+
+    working = _FIGURE_PLACEHOLDER_RE.sub(_repl, working)
+
+    # Basic block/line break normalization similar to frontend
+    working = re.sub(r"<br\s*/?>", "\n", working, flags=re.IGNORECASE)
+    working = re.sub(r"<li[^>]*>", "- ", working, flags=re.IGNORECASE)
+    working = re.sub(r"</(p|div|section|article|h[1-6]|li)>", "\n\n", working, flags=re.IGNORECASE)
+
+    # Strip remaining tags and decode entities
+    working = re.sub(r"<[^>]+>", "", working)
+    working = html.unescape(working)
+
+    # Normalize whitespace
+    working = working.replace("\r", "")
+    working = re.sub(r"[ \t]+\n", "\n", working)
+    working = re.sub(r"\n{3,}", "\n\n", working)
+    lines = [line.rstrip() for line in working.split("\n")]
+    normalized = "\n".join(lines).strip()
+    return normalized
+
+
 # ===== Diary CRUD Endpoints =====
 
 @router.post("", response_model=DiaryCreateResponse, status_code=status.HTTP_201_CREATED)
@@ -150,6 +188,9 @@ async def create_diary(
     tags: Optional[str] = Form(None, description="JSON array of tag strings"),
     media_manifest: Optional[str] = Form(
         None, description="JSON array describing uploaded media placeholders"
+    ),
+    content_blocks: Optional[str] = Form(
+        None, description="JSON array of order-preserving content blocks"
     ),
     media_files: List[UploadFile] = File(default_factory=list),
 ) -> DiaryCreateResponse:
@@ -201,9 +242,35 @@ async def create_diary(
             detail="Media files count does not match manifest entries.",
         )
 
+    # Normalize content: accept either serialized text with placeholders or raw HTML from rich editor
+    if ("<figure" in content_value) and ("{{media:" not in content_value):
+        # Convert HTML with data-placeholder figures to placeholder text
+        content_value = _html_to_placeholder_text(content_value)
+
+    # Prefer content_blocks for building the raw content string to preserve order
+    content_value_final = content_value
+    if content_blocks:
+        try:
+            blocks = json.loads(content_blocks)
+            if isinstance(blocks, list) and blocks:
+                parts: list[str] = []
+                for blk in blocks:
+                    t = (blk or {}).get('type')
+                    if t == 'text':
+                        txt = str((blk or {}).get('text') or '')
+                        parts.append(txt)
+                    elif t == 'media':
+                        ph = str((blk or {}).get('placeholder') or '').strip()
+                        if ph:
+                            parts.append(f"{{{{media:{ph}}}}}")
+                content_value_final = "".join(parts)
+        except Exception:
+            # Fallback to existing behavior
+            pass
+
     request_payload = DiaryCreateRequest(
         title=title_value,
-        content=content_value,
+        content=content_value_final,
         region_id=region_id,
         tags=tags_value,
         media_placeholders=manifest_items,
@@ -451,6 +518,9 @@ async def update_diary(
     - Content will be re-compressed if changed
     """
     try:
+        # Normalize content if client submits raw HTML with figure placeholders
+        if request.content is not None and ("<figure" in request.content) and ("{{media:" not in request.content):
+            request.content = _html_to_placeholder_text(request.content)
         diary = await service.update_diary(
             diary_id=diary_id,
             user_id=current_user.id,

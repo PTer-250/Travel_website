@@ -1,11 +1,10 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
-import PageSection from '../components/ui/PageSection.vue'
 import ErrorAlert from '../components/ui/ErrorAlert.vue'
 import LoadingIndicator from '../components/ui/LoadingIndicator.vue'
-import EmptyState from '../components/ui/EmptyState.vue'
 import RouteMap from '../components/map/RouteMap.vue'
+import AIChatPanel from '../components/chat/AIChatPanel.vue'
 import KeywordSearchSelect from '../components/ui/KeywordSearchSelect.vue'
 import {
   fetchRoutePlan,
@@ -100,6 +99,9 @@ const preferencesStore = usePreferencesStore()
 const { routing } = storeToRefs(preferencesStore)
 
 const routeForm = reactive<RouteFormState>({ ...createRoutingDefaults(), transportModes: [] })
+
+// 高级选项显示状态
+const showAdvanced = ref(false)
 
 const selectedRegion = ref<RegionOption | null>(null)
 const selectedStartNode = ref<NodeOption | null>(null)
@@ -311,157 +313,146 @@ const applySample = (index: number) => {
 </script>
 
 <template>
-  <div class="space-y-8">
-    <!-- 路线规划表单 -->
-    <PageSection
-      title="旅游路线规划"
-      description="进入景区或学校后，输入起点和终点，系统会为您规划最优旅游线路。支持最短距离、最短时间等多种策略，可选择不同交通工具。"
-    >
-      <form class="rounded-2xl border border-slate-200 bg-white p-6 shadow-lg" @submit.prevent="submitRoute">
-        <div class="space-y-5">
-          <!-- 区域选择 -->
-          <div class="grid gap-5 md:grid-cols-2">
-            <div class="space-y-2 md:col-span-2">
-              <label class="text-sm font-semibold text-slate-700">
-                <span class="flex items-center gap-2">🏛️ 目标区域</span>
-              </label>
-              <KeywordSearchSelect
-                v-model="selectedRegion"
-                :search="searchRegionOptions"
-                placeholder="输入区域名称或关键词搜索"
-                @select="handleRegionSelect"
-                @clear="handleRegionClear"
-              />
-            </div>
+  <div class="h-[calc(100vh-8rem)] flex gap-4">
+    <!-- 主要地图区域 -->
+    <div class="flex-1 flex flex-col space-y-4">
+      <!-- 一行式搜索和规划区域 -->
+      <div class="bg-white rounded-xl shadow-lg border border-slate-200 p-4">
+        <div class="flex items-center gap-3 overflow-x-auto">
+          <!-- 景区搜索 -->
+          <div class="flex-shrink-0 w-48">
+            <KeywordSearchSelect
+              v-model="selectedRegion"
+              :search="searchRegionOptions"
+              placeholder="搜索景区..."
+              @select="handleRegionSelect"
+              @clear="handleRegionClear"
+            />
+          </div>
 
-            <!-- 起点终点 -->
-            <div class="space-y-2">
-              <label class="text-sm font-semibold text-slate-700">
-                <span class="flex items-center gap-2">📍 起点节点</span>
-              </label>
-              <KeywordSearchSelect
-                v-model="selectedStartNode"
-                :search="searchStartNodeOptions"
-                placeholder="输入起点节点名称"
-                :disabled="!routeForm.regionId"
-                @select="handleStartNodeSelect"
-                @clear="handleStartNodeClear"
-              />
-            </div>
+          <!-- 起点 -->
+          <div class="flex-shrink-0 w-32">
+            <KeywordSearchSelect
+              v-model="selectedStartNode"
+              :search="searchStartNodeOptions"
+              placeholder="起点"
+              :disabled="!routeForm.regionId"
+              @select="handleStartNodeSelect"
+              @clear="handleStartNodeClear"
+            />
+          </div>
 
-            <div class="space-y-2">
-              <label class="text-sm font-semibold text-slate-700">
-                <span class="flex items-center gap-2">🎯 终点节点</span>
-              </label>
-              <KeywordSearchSelect
-                v-model="selectedEndNode"
-                :search="searchEndNodeOptions"
-                placeholder="输入终点节点名称"
-                :disabled="!routeForm.regionId"
-                @select="handleEndNodeSelect"
-                @clear="handleEndNodeClear"
-              />
-            </div>
+          <!-- 交换按钮 -->
+          <div class="flex-shrink-0">
+            <button
+              type="button"
+              @click="swapRouteNodes"
+              :disabled="!routeForm.startNodeId || !routeForm.endNodeId"
+              class="flex items-center gap-1 rounded-lg border-2 border-slate-300 bg-white px-2 py-2 text-xs font-medium text-slate-600 transition hover:border-emerald-500 hover:text-emerald-600 disabled:opacity-50"
+            >
+              🔄
+            </button>
+          </div>
 
-            <!-- 策略选择 -->
-            <div class="space-y-2">
-              <label class="text-sm font-semibold text-slate-700">
-                <span class="flex items-center gap-2">🎯 优化策略</span>
-              </label>
-              <select v-model="routeForm.strategy" class="w-full rounded-xl border-2 border-slate-200 px-4 py-2.5 transition focus:border-primary">
+          <!-- 终点 -->
+          <div class="flex-shrink-0 w-32">
+            <KeywordSearchSelect
+              v-model="selectedEndNode"
+              :search="searchEndNodeOptions"
+              placeholder="终点"
+              :disabled="!routeForm.regionId"
+              @select="handleEndNodeSelect"
+              @clear="handleEndNodeClear"
+            />
+          </div>
+
+          <!-- 生成路线按钮 -->
+          <div class="flex-shrink-0">
+            <button
+              type="button"
+              @click="submitRoute"
+              :disabled="routeLoading || !routeForm.regionId || !routeForm.startNodeId || !routeForm.endNodeId"
+              class="flex items-center gap-2 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 px-4 py-2.5 text-white font-semibold shadow-lg transition hover:shadow-xl hover:from-emerald-600 hover:to-teal-700 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {{ routeLoading ? '🔄 规划中…' : '🗺️ 生成路线' }}
+            </button>
+          </div>
+
+          <!-- 高级选项切换 -->
+          <div class="flex-shrink-0">
+            <button
+              type="button"
+              @click="showAdvanced = !showAdvanced"
+              class="flex items-center gap-2 rounded-lg border-2 border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-600 transition hover:border-blue-500 hover:text-blue-600"
+            >
+              <svg class="h-4 w-4 transition-transform duration-200" :class="showAdvanced ? 'rotate-180' : ''" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+              </svg>
+              高级
+            </button>
+          </div>
+        </div>
+
+        <!-- 高级选项区域 -->
+        <div v-if="showAdvanced" class="mt-4 space-y-4 border-t border-slate-200 pt-4">
+          <!-- 策略和交通方式 -->
+          <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
+            <div>
+              <label class="block text-xs font-medium text-slate-700 mb-2">🎯 优化策略</label>
+              <select v-model="routeForm.strategy" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20">
                 <option v-for="option in routeStrategyOptions" :key="option.value" :value="option.value">
                   {{ option.label }}
                 </option>
               </select>
             </div>
 
-            <!-- 交换起终点按钮 -->
-            <div class="flex items-end">
-              <button
-                type="button"
-                class="w-full rounded-xl border-2 border-slate-200 bg-slate-50 px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:border-primary hover:bg-primary/5"
-                @click="swapRouteNodes"
-                :disabled="!routeForm.startNodeId || !routeForm.endNodeId"
-              >
-                🔄 交换起终点
-              </button>
+            <div class="lg:col-span-2">
+              <label class="block text-xs font-medium text-slate-700 mb-2">🚗 交通方式</label>
+              <div class="flex flex-wrap gap-1">
+                <label
+                  v-for="option in transportModeOptions"
+                  :key="option.value"
+                  class="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5 text-xs font-medium text-slate-700 transition hover:border-emerald-500 hover:bg-emerald-50"
+                >
+                  <input v-model="routeForm.transportModes" type="checkbox" :value="option.value" class="h-3 w-3 rounded border-slate-300 text-emerald-600" />
+                  {{ option.label }}
+                </label>
+              </div>
             </div>
           </div>
 
-          <!-- 交通方式 -->
-          <fieldset class="space-y-3">
-            <legend class="text-sm font-semibold text-slate-700">🚗 交通方式（可选）</legend>
-            <div class="flex flex-wrap gap-3">
-              <label
-                v-for="option in transportModeOptions"
-                :key="option.value"
-                class="inline-flex items-center gap-2 rounded-lg border-2 border-slate-200 bg-slate-50 px-4 py-2 text-sm font-medium text-slate-700 transition hover:border-primary hover:bg-primary/5"
-              >
-                <input v-model="routeForm.transportModes" type="checkbox" :value="option.value" class="h-4 w-4 rounded border-2 text-primary" />
-                {{ option.label }}
-              </label>
-            </div>
-            <p class="text-xs font-medium text-slate-500">💡 不选择则使用后端允许的所有交通方式</p>
-          </fieldset>
-
           <!-- 快速示例 -->
-          <div class="rounded-xl bg-slate-50 p-4 space-y-3">
+          <div class="rounded-lg bg-slate-50 p-3">
             <span class="text-xs font-semibold text-slate-600">⚡ 快速示例</span>
-            <div class="flex flex-wrap gap-2">
+            <div class="mt-2 flex flex-wrap gap-1">
               <button
                 v-for="(sample, index) in SAMPLE_ROUTING_COMBINATIONS"
                 :key="sample.label"
                 type="button"
-                class="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-600 shadow-sm transition hover:border-primary hover:text-primary hover:shadow"
+                class="rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs font-medium text-slate-600 shadow-sm transition hover:border-emerald-500 hover:text-emerald-600"
                 @click="applySample(index)"
               >
                 {{ sample.label }}
               </button>
             </div>
           </div>
-
-          <!-- 提交按钮 -->
-          <div class="flex flex-wrap items-center gap-3 border-t border-slate-100 pt-5">
-            <button
-              type="submit"
-              class="rounded-xl bg-gradient-to-r from-blue-500 to-primary px-6 py-3 text-sm font-bold text-white shadow-lg shadow-blue-500/30 transition hover:shadow-xl hover:shadow-blue-500/40 disabled:from-slate-300 disabled:to-slate-400 disabled:shadow-none"
-              :disabled="routeLoading || !routeForm.regionId || !routeForm.startNodeId || !routeForm.endNodeId"
-            >
-              {{ routeLoading ? '🔄 规划中…' : '🗺️ 计算路线' }}
-            </button>
-            <button
-              type="button"
-              class="rounded-xl border-2 border-slate-300 bg-white px-6 py-3 text-sm font-semibold text-slate-600 transition hover:border-primary hover:text-primary"
-              @click="resetRouteForm"
-            >
-              🔄 重置参数
-            </button>
-          </div>
         </div>
-      </form>
-    </PageSection>
-
-    <!-- 地图展示 -->
-    <PageSection
-      title="地图总览"
-      description="生成的路线将在地图上展示，包括途经节点和路段信息。"
-    >
-      <div class="space-y-4">
-        <ErrorAlert v-if="mapError" :message="mapError" />
-        <RouteMap
-          :plan="plan"
-          :tile="mapTile"
-          :loading="mapLoading || routeLoading"
-        />
       </div>
-    </PageSection>
 
-    <!-- 路线详情 -->
-    <PageSection
-      title="路线详情"
-      description="查看路线的详细统计信息和途经节点。"
-    >
-      <div class="rounded-2xl border border-slate-200 bg-white p-6 shadow-lg">
+      <!-- 地图显示区域 -->
+      <div class="flex-1 bg-white rounded-xl shadow-lg border border-slate-200 min-h-96">
+        <div class="h-full relative">
+          <ErrorAlert v-if="mapError" :message="mapError" />
+          <RouteMap
+            :plan="plan"
+            :tile="mapTile"
+            :loading="mapLoading || routeLoading"
+          />
+        </div>
+      </div>
+
+      <!-- 路线详情 -->
+      <div class="bg-white rounded-xl shadow-lg border border-slate-200 p-4">
         <template v-if="routeError">
           <ErrorAlert :message="routeError.message" />
         </template>
@@ -469,64 +460,47 @@ const applySample = (index: number) => {
           <LoadingIndicator label="正在计算最优路线，请稍候…" />
         </template>
         <template v-else-if="plan">
-          <div class="space-y-6">
-            <!-- 统计信息 -->
-            <div class="grid gap-4 sm:grid-cols-3">
-              <div class="rounded-xl bg-gradient-to-br from-blue-50 to-blue-100 p-5 text-center">
-                <p class="mb-2 text-xs font-semibold text-blue-600">📏 总距离</p>
-                <p class="text-2xl font-bold text-blue-900">
-                  {{ plan.total_distance.toFixed(2) }} <span class="text-sm font-normal">km</span>
-                </p>
-              </div>
-              <div class="rounded-xl bg-gradient-to-br from-emerald-50 to-emerald-100 p-5 text-center">
-                <p class="mb-2 text-xs font-semibold text-emerald-600">⏱️ 总耗时</p>
-                <p class="text-2xl font-bold text-emerald-900">
-                  {{ plan.total_time.toFixed(2) }} <span class="text-sm font-normal">min</span>
-                </p>
-              </div>
-              <div class="rounded-xl bg-gradient-to-br from-purple-50 to-purple-100 p-5 text-center">
-                <p class="mb-2 text-xs font-semibold text-purple-600">🏛️ 区域</p>
-                <p class="text-lg font-bold text-purple-900">
-                  {{ selectedRegion?.label ?? `区域 ${plan.region_id}` }}
-                </p>
-              </div>
-            </div>
-
-            <!-- 交通方式 -->
-            <div class="rounded-xl bg-slate-50 p-4">
-              <p class="mb-3 text-sm font-semibold text-slate-700">🚗 允许的交通方式</p>
-              <div class="flex flex-wrap gap-2">
-                <span
-                  v-for="mode in allowedModes"
-                  :key="mode"
-                  class="inline-flex items-center rounded-lg bg-blue-100 px-3 py-1.5 text-xs font-semibold text-blue-700"
-                >
-                  {{ TRANSPORT_MODE_LABELS[mode as TransportMode] ?? mode }}
-                </span>
-              </div>
-            </div>
-
-            <!-- 路线提示 -->
-            <div class="rounded-xl bg-blue-50 p-4 text-sm text-blue-700">
-              <p class="font-medium">
-                💡 <strong>提示：</strong>详细的节点和路段信息已在地图上标注，不同的交通方式会以对应颜色高亮显示。
+          <div class="grid gap-4 sm:grid-cols-3">
+            <div class="rounded-xl bg-gradient-to-br from-blue-50 to-blue-100 p-4 text-center">
+              <p class="mb-1 text-xs font-semibold text-blue-600">📏 距离</p>
+              <p class="text-lg font-bold text-blue-900">
+                {{ plan.total_distance.toFixed(1) }}km
               </p>
             </div>
-
-            <!-- 更新时间 -->
-            <p class="text-center text-xs text-slate-500">
-              更新时间：{{ plan.generated_at ? new Date(plan.generated_at).toLocaleString() : '—' }}
-            </p>
+            <div class="rounded-xl bg-gradient-to-br from-emerald-50 to-emerald-100 p-4 text-center">
+              <p class="mb-1 text-xs font-semibold text-emerald-600">⏱️ 耗时</p>
+              <p class="text-lg font-bold text-emerald-900">
+                {{ Math.round(plan.total_time) }}min
+              </p>
+            </div>
+            <div class="rounded-xl bg-gradient-to-br from-purple-50 to-purple-100 p-4 text-center">
+              <p class="mb-1 text-xs font-semibold text-purple-600">🏛️ 区域</p>
+              <p class="text-sm font-bold text-purple-900 truncate">
+                {{ selectedRegion?.label ?? `区域 ${plan.region_id}` }}
+              </p>
+            </div>
           </div>
         </template>
         <template v-else>
-          <EmptyState
-            title="暂无路线规划结果"
-            description="请填写上方表单并点击计算路线按钮，即可获取详细规划。"
-            icon="🗺️"
-          />
+          <div class="text-center py-8">
+            <div class="text-4xl mb-2">🗺️</div>
+            <p class="text-sm text-slate-600">搜索景点，设置起终点，让AI为你规划最佳路线</p>
+          </div>
         </template>
       </div>
-    </PageSection>
+    </div>
+
+    <!-- 右侧智能体聊天面板 - 缩窄宽度 -->
+    <div class="w-80 min-w-[280px] max-w-[320px]">
+      <AIChatPanel 
+        :current-region="selectedRegion?.label"
+        :context-data="{
+          region: selectedRegion?.payload,
+          startNode: selectedStartNode?.payload,
+          endNode: selectedEndNode?.payload,
+          routePlan: plan
+        }"
+      />
+    </div>
   </div>
 </template>

@@ -424,11 +424,13 @@ const placeholderContent = computed(() => {
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.94), rgba(248, 250, 252, 0.85));
   overflow: hidden;
   box-shadow: 0 20px 45px -20px rgba(15, 23, 42, 0.35);
+  height: 100%;
 }
 
 .map-viewport {
   position: relative;
-  height: 420px;
+  height: 100%;
+  min-height: 300px;
   width: 100%;
 }
 

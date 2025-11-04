@@ -193,15 +193,14 @@ class DiaryService:
         """Render a media element (image/video) as HTML."""
 
         media_url = self._build_media_url(diary_id, media.id)
-        safe_filename = html.escape(media.filename)
+        # 不再在正文中展示文件名，避免泄露与干扰排版
 
         if media.media_type == DiaryMediaType.IMAGE:
             return (
                 '<figure class="diary-media diary-media-image" '
                 f'data-media-id="{media.id}">'  # noqa: E501
-                f'<img src="{media_url}" alt="{safe_filename}" '
+                f'<img src="{media_url}" alt="" '
                 'loading="lazy" />'
-                f'<figcaption>{safe_filename}</figcaption>'
                 '</figure>'
             )
 
@@ -209,7 +208,6 @@ class DiaryService:
             '<figure class="diary-media diary-media-video" '
             f'data-media-id="{media.id}">'  # noqa: E501
             f'<video controls preload="metadata" src="{media_url}"></video>'
-            f'<figcaption>{safe_filename}</figcaption>'
             '</figure>'
         )
 
@@ -246,14 +244,20 @@ class DiaryService:
                 # Keep original content if decompression fails
 
         if diary and diary.media_items:
-            ordered_media = sorted(diary.media_items, key=lambda item: item.id)
-            diary.media_urls = [self._build_media_url(diary.id, item.id) for item in ordered_media]
+            ordered_media = sorted(diary.media_items, key=lambda item: (item.id or 0))
+            diary_id_int = int(diary.id or 0)
+            diary.media_urls = [self._build_media_url(diary_id_int, int(item.id or 0)) for item in ordered_media]
             diary.media_types = [item.media_type for item in ordered_media]
 
             content_html = diary.content or ""
-            if "<figure" not in content_html and "{{media:" not in content_html:
+            # 若内容包含占位符，则在读取时按占位符就地渲染为 HTML，保持原始顺序
+            if "{{media:" in content_html:
+                media_lookup = {media.placeholder: media for media in ordered_media}
+                diary.content = self._render_content_with_media(content_html, media_lookup, diary_id_int)
+            # 若既无 <figure> 也无占位符，保留向后兼容：将所有媒体追加在末尾
+            elif "<figure" not in content_html:
                 appended = "".join(
-                    self._render_media_element(diary.id, media) for media in ordered_media
+                    self._render_media_element(diary_id_int, media) for media in ordered_media
                 )
                 diary.content = (content_html + appended).strip() or content_html
         
@@ -280,10 +284,11 @@ class DiaryService:
             diary.title = request.title
         if request.content is not None:
             media_lookup = {media.placeholder: media for media in diary.media_items}
+            diary_id_int2 = int(diary.id or 0)
             rendered_content = self._render_content_with_media(
                 request.content,
                 media_lookup,
-                diary.id,
+                diary_id_int2,
             )
             compressed_data, is_compressed, _ = compression_service.compress_content(
                 rendered_content
@@ -301,8 +306,9 @@ class DiaryService:
         diary.updated_at = datetime.utcnow()
 
         if diary.media_items:
-            ordered = sorted(diary.media_items, key=lambda item: item.id)
-            diary.media_urls = [self._build_media_url(diary.id, item.id) for item in ordered]
+            ordered = sorted(diary.media_items, key=lambda item: (item.id or 0))
+            diary_id_int = int(diary.id or 0)
+            diary.media_urls = [self._build_media_url(diary_id_int, int(item.id or 0)) for item in ordered]
             diary.media_types = [item.media_type for item in ordered]
         
         return await self.repo.update(diary)
