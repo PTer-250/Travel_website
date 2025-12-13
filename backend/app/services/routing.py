@@ -9,7 +9,13 @@ from collections import deque
 import heapq
 
 from app.algorithms import Edge as AlgoEdge
-from app.algorithms import PathResult, PathSegment as AlgoPathSegment, WeightStrategy, shortest_path
+from app.algorithms import (
+    PathResult,
+    PathSegment as AlgoPathSegment,
+    WeightStrategy,
+    shortest_path,
+    compute_path_branch_and_bound,
+)
 from app.models.enums import RegionType, TransportMode
 from app.models.graph import GraphEdge, GraphNode
 from app.repositories import GraphRepository, RegionRepository
@@ -131,6 +137,274 @@ class RoutingService:
             nodes=route_nodes,
             segments=route_segments,
         )
+
+    async def compute_multi_route(
+        self,
+        *,
+        region_id: int,
+        waypoint_node_ids: Sequence[int],
+        start_node_id: int | None = None,
+        end_node_id: int | None = None,
+        strategy: WeightStrategy | str = WeightStrategy.TIME,
+        transport_modes: Sequence[TransportMode | str] | None = None,
+    ) -> RoutePlan:
+        """Compute a multi-point route based on provided waypoints and optional start/end.
+
+        Behaviour:
+        - If both start and end provided: use branch-and-bound to find minimal order.
+        - If only start provided: connect waypoints in the provided order, then end omitted.
+        - If only end provided: connect waypoints in reverse provided order ending at end.
+        - If neither provided: compute a nearest-neighbour order across waypoints.
+        """
+        region = await self._region_repository.get_region(region_id)
+        if region is None:
+            raise RegionNotFoundError(f"Region {region_id} does not exist")
+
+        if not waypoint_node_ids:
+            raise NodeValidationError("At least one waypoint node id is required")
+
+        # Validate nodes belong to region
+        to_check = set(waypoint_node_ids)
+        if start_node_id is not None:
+            to_check.add(start_node_id)
+        if end_node_id is not None:
+            to_check.add(end_node_id)
+        nodes = await self._graph_repository.get_nodes(sorted(to_check))
+        node_map_by_id = {n.id: n for n in nodes}
+        missing = [nid for nid in to_check if nid not in node_map_by_id]
+        if missing:
+            raise NodeValidationError(f"Nodes not found: {missing}")
+        if any(n.region_id != region_id for n in nodes):
+            raise NodeValidationError("Nodes must belong to the specified region")
+
+        # Load edges and resolve transport modes
+        edges = await self._get_edges_cached(region_id)
+        if not edges:
+            raise RouteNotFoundError(f"Region {region_id} has no routing edges")
+        algorithm_edges = self._to_algorithm_edges(edges)
+        allowed_modes = self._resolve_transport_modes(region.type, transport_modes)
+
+        # Build working set of node ids (as strings)
+        waypoints_str = [str(nid) for nid in waypoint_node_ids]
+        start_str = str(start_node_id) if start_node_id is not None else None
+        end_str = str(end_node_id) if end_node_id is not None else None
+
+        # Determine visiting order
+        route_ids_str: list[str]
+        legs: list[PathResult]
+
+        if start_str and end_str:
+            order = compute_path_branch_and_bound(
+                algorithm_edges,
+                start=start_str,
+                end=end_str,
+                targets=waypoints_str,
+                allowed_modes=allowed_modes,
+                strategy=strategy,
+            )
+            route_ids_str = order.route
+            legs = order.legs
+        elif start_str and not end_str:
+            # Sequentially follow provided waypoint order
+            route_ids_str = [start_str] + waypoints_str
+            legs = _pairwise_paths(algorithm_edges, route_ids_str, allowed_modes, strategy)
+        elif end_str and not start_str:
+            # Reverse sequential order towards end
+            route_ids_str = list(reversed(waypoints_str)) + [end_str]
+            legs = _pairwise_paths(algorithm_edges, route_ids_str, allowed_modes, strategy)
+        else:
+            # Neither start nor end: pick a not-too-winding path via nearest-neighbour
+            # Use first waypoint as start, then greedy to visit remaining.
+            start_str = waypoints_str[0]
+            remaining = waypoints_str[1:]
+            route_ids_str = [start_str]
+            # Precompute pair costs lazily by shortest_path calls
+            while remaining:
+                # choose next with minimal cost/time from current
+                current = route_ids_str[-1]
+                best = None
+                best_cost = float("inf")
+                for candidate in remaining:
+                    res = shortest_path(
+                        algorithm_edges,
+                        start=current,
+                        goal=candidate,
+                        allowed_modes=allowed_modes,
+                        strategy=strategy,
+                    )
+                    cost_val = res.total_distance if WeightStrategy(strategy) is WeightStrategy.DISTANCE else res.total_time
+                    if cost_val < best_cost:
+                        best_cost = cost_val
+                        best = candidate
+                if best is None:
+                    raise RouteNotFoundError("No feasible path among waypoints")
+                route_ids_str.append(best)
+                remaining.remove(best)
+            legs = _pairwise_paths(algorithm_edges, route_ids_str, allowed_modes, strategy)
+
+        # Stitch leg paths into a single sequence of nodes and segments
+        combined_node_ids: list[str] = []
+        combined_segments: list[AlgoPathSegment] = []
+        total_distance = 0.0
+        total_time = 0.0
+        for i, leg in enumerate(legs):
+            if i == 0:
+                combined_node_ids.extend(leg.nodes)
+            else:
+                # avoid duplicating joint node
+                combined_node_ids.extend(leg.nodes[1:])
+            combined_segments.extend(leg.segments)
+            total_distance += leg.total_distance
+            total_time += leg.total_time
+
+        node_map = await self._build_node_map(region_id, combined_node_ids)
+        route_nodes = [self._to_route_node(node_map, nid) for nid in combined_node_ids]
+        route_segments = [self._to_route_segment(node_map, seg) for seg in combined_segments]
+
+        return RoutePlan(
+            region_id=region_id,
+            strategy=WeightStrategy(strategy),
+            total_distance=total_distance,
+            total_time=total_time,
+            allowed_modes=tuple(allowed_modes),
+            nodes=route_nodes,
+            segments=route_segments,
+        )
+
+    async def _fetch_and_validate_nodes(
+        self, region_id: int, start_node_id: int, end_node_id: int
+    ) -> tuple[GraphNode, GraphNode]:
+        # 使用缓存获取节点
+        start_node = await self._get_node_cached(start_node_id)
+        end_node = await self._get_node_cached(end_node_id)
+
+        if start_node is None or end_node is None:
+            missing = []
+            if start_node is None:
+                missing.append(str(start_node_id))
+            if end_node is None:
+                missing.append(str(end_node_id))
+            raise NodeValidationError(f"Nodes not found: {', '.join(missing)}")
+
+        if start_node.region_id != region_id or end_node.region_id != region_id:
+            raise NodeValidationError("Nodes must belong to the specified region")
+
+        return start_node, end_node
+
+    async def _build_node_map(self, region_id: int, node_ids: Iterable[str]) -> dict[int, GraphNode]:
+        unique_ids = {int(node_id) for node_id in node_ids}
+        
+        # 先从缓存中获取
+        mapping = {}
+        uncached_ids = []
+        for node_id in unique_ids:
+            cached_node = self._nodes_cache.get(node_id)
+            if cached_node:
+                mapping[node_id] = cached_node
+            else:
+                uncached_ids.append(node_id)
+        
+        # 批量获取未缓存的节点
+        if uncached_ids:
+            nodes = await self._graph_repository.get_nodes(sorted(uncached_ids))
+            for node in nodes:
+                mapping[node.id] = node
+                self._nodes_cache[node.id] = node  # 缓存新获取的节点
+        
+        if len(mapping) != len(unique_ids):
+            missing = unique_ids - mapping.keys()
+            raise NodeValidationError(f"Missing nodes in region {region_id}: {sorted(missing)}")
+        return mapping
+
+    def _to_route_node(self, node_map: dict[int, GraphNode], node_id: str) -> RouteNode:
+        identifier = int(node_id)
+        node = node_map.get(identifier)
+        if node is None:
+            raise NodeValidationError(f"Node {identifier} not found in node map")
+        return RouteNode(
+            id=identifier,
+            name=node.name,
+            latitude=node.latitude,
+            longitude=node.longitude,
+        )
+
+    def _to_route_segment(self, node_map: dict[int, GraphNode], segment: AlgoPathSegment) -> RouteSegment:
+        source_id = int(segment.source)
+        target_id = int(segment.target)
+        if source_id not in node_map or target_id not in node_map:
+            raise NodeValidationError("Segment references unknown nodes")
+        return RouteSegment(
+            source_id=source_id,
+            target_id=target_id,
+            transport_mode=segment.transport_mode,
+            distance=segment.distance,
+            time=segment.time,
+        )
+
+    def _to_algorithm_edges(self, edges: Sequence[GraphEdge]) -> list[AlgoEdge]:
+        return [
+            AlgoEdge(
+                source=str(edge.start_node_id),
+                target=str(edge.end_node_id),
+                distance=edge.distance,
+                ideal_speed=edge.ideal_speed,
+                congestion=edge.congestion,
+                transport_modes=self._normalise_modes(edge.transport_modes),
+            )
+            for edge in edges
+        ]
+
+    def _resolve_transport_modes(
+        self,
+        region_type: RegionType,
+        transport_modes: Sequence[TransportMode | str] | None,
+    ) -> Sequence[str] | None:
+        defaults = self._default_modes(region_type)
+        if transport_modes is None:
+            return tuple(sorted(defaults))
+
+        requested = {self._normalise_mode(mode) for mode in transport_modes}
+        if not requested:
+            return tuple(sorted(defaults))
+
+        filtered = requested & defaults
+        if not filtered:
+            raise NodeValidationError("Provided transport modes are not allowed in this region")
+        return tuple(sorted(filtered))
+
+    def _default_modes(self, region_type: RegionType) -> set[str]:
+        if region_type is RegionType.CAMPUS:
+            return {TransportMode.WALK.value, TransportMode.BIKE.value}
+        if region_type is RegionType.SCENIC:
+            return {TransportMode.WALK.value, TransportMode.ELECTRIC_CART.value}
+        return {TransportMode.WALK.value}
+
+    def _normalise_modes(self, modes: Iterable[TransportMode | str]) -> tuple[str, ...]:
+        return tuple(self._normalise_mode(mode) for mode in modes)
+
+    def _normalise_mode(self, mode: TransportMode | str) -> str:
+        if isinstance(mode, TransportMode):
+            return mode.value
+        return str(mode).lower()
+
+
+def _pairwise_paths(
+    algorithm_edges: Sequence[AlgoEdge],
+    route_ids_str: Sequence[str],
+    allowed_modes: Sequence[str] | None,
+    strategy: WeightStrategy | str,
+) -> list[PathResult]:
+    legs: list[PathResult] = []
+    for a, b in zip(route_ids_str, route_ids_str[1:]):
+        res = shortest_path(
+            algorithm_edges,
+            start=a,
+            goal=b,
+            allowed_modes=allowed_modes,
+            strategy=strategy,
+        )
+        legs.append(res)
+    return legs
 
     async def compute_reachable_nodes(
         self,

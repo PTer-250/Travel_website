@@ -125,6 +125,34 @@ export const fetchRoutePlan = async (params: RoutePlanQuery): Promise<RoutePlanR
   return data
 }
 
+export interface MultiRoutePlanQuery {
+  regionId: number
+  waypointNodeIds: number[]
+  startNodeId?: number | null
+  endNodeId?: number | null
+  strategy: WeightStrategy
+  transportModes?: TransportMode[]
+}
+
+export const fetchMultiRoutePlan = async (
+  params: MultiRoutePlanQuery
+): Promise<RoutePlanResponse> => {
+  const body = {
+    region_id: params.regionId,
+    waypoint_node_ids: params.waypointNodeIds,
+    start_node_id: params.startNodeId ?? null,
+    end_node_id: params.endNodeId ?? null,
+    strategy: params.strategy,
+    transport_modes:
+      params.transportModes && params.transportModes.length > 0
+        ? params.transportModes
+        : null,
+  }
+
+  const { data } = await apiClient.post<RoutePlanResponse>('/routing/multi-route', body)
+  return data
+}
+
 export interface FacilityQuery {
   regionId: number
   originNodeId: number

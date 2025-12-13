@@ -8,6 +8,7 @@ import AIChatPanel from '../components/chat/AIChatPanel.vue'
 import KeywordSearchSelect from '../components/ui/KeywordSearchSelect.vue'
 import {
   fetchRoutePlan,
+  fetchMultiRoutePlan,
   fetchRegionMapData,
   searchRegionNodes,
   searchRegions,
@@ -106,6 +107,7 @@ const showAdvanced = ref(false)
 const selectedRegion = ref<RegionOption | null>(null)
 const selectedStartNode = ref<NodeOption | null>(null)
 const selectedEndNode = ref<NodeOption | null>(null)
+const waypoints = ref<NodeOption[]>([])
 
 // 搜索函数
 const searchRegionOptions = async (keyword: string): Promise<RegionOption[]> => {
@@ -152,6 +154,7 @@ const handleRegionSelect = (option: any) => {
     routeForm.regionId = regionId
     selectedStartNode.value = null
     selectedEndNode.value = null
+    waypoints.value = []
     routeForm.startNodeId = 0
     routeForm.endNodeId = 0
   }
@@ -164,6 +167,7 @@ const handleRegionClear = () => {
   routeForm.endNodeId = 0
   selectedStartNode.value = null
   selectedEndNode.value = null
+  waypoints.value = []
 }
 
 const handleStartNodeSelect = (option: any) => {
@@ -255,25 +259,46 @@ watch(plan, (value) => {
 
 // 提交路线规划
 const submitRoute = async () => {
-  if (!routeForm.regionId || !routeForm.startNodeId || !routeForm.endNodeId) {
-    return
-  }
-  const payload: RoutePlanQuery = {
-    regionId: routeForm.regionId,
-    startNodeId: routeForm.startNodeId,
-    endNodeId: routeForm.endNodeId,
-    strategy: routeForm.strategy,
-    transportModes: routeForm.transportModes,
-  }
+  if (!routeForm.regionId) return
+  const hasWaypoints = waypoints.value.length > 0
+  const hasStartEnd = !!routeForm.startNodeId && !!routeForm.endNodeId
   try {
-    const result = await executeRoute(payload)
-    preferencesStore.updateRouting({
-      regionId: payload.regionId,
-      startNodeId: payload.startNodeId,
-      endNodeId: payload.endNodeId,
-      strategy: payload.strategy,
-      transportModes: [...(payload.transportModes ?? [])],
-    })
+    let result: RoutePlanResponse
+    if (hasWaypoints) {
+      const wpIds = waypoints.value
+        .map((w) => w.payload?.id)
+        .filter((id): id is number => typeof id === 'number')
+      const params = {
+        regionId: routeForm.regionId,
+        waypointNodeIds: wpIds,
+        startNodeId: routeForm.startNodeId || undefined,
+        endNodeId: routeForm.endNodeId || undefined,
+        strategy: routeForm.strategy,
+        transportModes: routeForm.transportModes,
+      }
+      result = await fetchMultiRoutePlan(params)
+      // 写入到当前计划数据
+      // 直接更新响应数据以驱动界面刷新
+      ;(routeData as any).value = result
+    } else if (hasStartEnd) {
+      const payload: RoutePlanQuery = {
+        regionId: routeForm.regionId,
+        startNodeId: routeForm.startNodeId,
+        endNodeId: routeForm.endNodeId,
+        strategy: routeForm.strategy,
+        transportModes: routeForm.transportModes,
+      }
+      result = await executeRoute(payload)
+      preferencesStore.updateRouting({
+        regionId: payload.regionId,
+        startNodeId: payload.startNodeId,
+        endNodeId: payload.endNodeId,
+        strategy: payload.strategy,
+        transportModes: [...(payload.transportModes ?? [])],
+      })
+    } else {
+      return
+    }
     await ensureMapData(result.region_id)
   } catch {
     // 错误由 useApiRequest 处理
@@ -290,6 +315,108 @@ const swapRouteNodes = () => {
   selectedEndNode.value = temp
 }
 
+// 多点路线：增删改处理
+const addWaypoint = () => {
+  waypoints.value.push({ id: Date.now(), label: '', description: '', payload: undefined })
+}
+
+const removeWaypoint = (index: number) => {
+  waypoints.value.splice(index, 1)
+}
+
+const handleWaypointSelect = (index: number, option: any) => {
+  const payload = option.payload as RegionNodeSummary | undefined
+  if (!payload) return
+  waypoints.value[index] = {
+    id: option.id,
+    label: option.label,
+    description: option.description,
+    payload,
+  }
+}
+
+const handleWaypointClear = (index: number) => {
+  waypoints.value[index] = { id: Date.now(), label: '', description: '', payload: undefined }
+}
+
+const moveWaypointUp = (index: number) => {
+  if (index <= 0) return
+  const tmp = waypoints.value[index - 1]
+  waypoints.value[index - 1] = waypoints.value[index]
+  waypoints.value[index] = tmp
+}
+
+const moveWaypointDown = (index: number) => {
+  if (index >= waypoints.value.length - 1) return
+  const tmp = waypoints.value[index + 1]
+  waypoints.value[index + 1] = waypoints.value[index]
+  waypoints.value[index] = tmp
+}
+
+// 拖拽排序
+const dragState = ref<{ from: number | null }>({ from: null })
+const dragHoverIndex = ref<number | null>(null)
+const onWaypointDragStart = (index: number, e: DragEvent) => {
+  dragState.value.from = index
+  e.dataTransfer?.setData('text/plain', String(index))
+  e.dataTransfer?.setDragImage(new Image(), 0, 0)
+}
+const onWaypointDragEnter = (index: number) => {
+  dragHoverIndex.value = index
+}
+const onWaypointDragLeave = (index: number) => {
+  if (dragHoverIndex.value === index) dragHoverIndex.value = null
+}
+const onWaypointDrop = (index: number, e: DragEvent) => {
+  const fromStr = e.dataTransfer?.getData('text/plain')
+  const from = dragState.value.from ?? (fromStr ? parseInt(fromStr) : null)
+  dragState.value.from = null
+  dragHoverIndex.value = null
+  if (from === null || from === index) return
+  const item = waypoints.value[from]
+  waypoints.value.splice(from, 1)
+  waypoints.value.splice(index, 0, item)
+}
+
+// 当途经点顺序或内容变化时，自动重新规划（加防抖）
+let waypointPlanTimer: number | null = null
+watch(
+  waypoints,
+  () => {
+    if (waypointPlanTimer) {
+      clearTimeout(waypointPlanTimer)
+      waypointPlanTimer = null
+    }
+    // 仅在存在有效途经点时触发
+    const hasValidWaypoints = waypoints.value.some((w) => typeof w.payload?.id === 'number')
+    if (!hasValidWaypoints || !routeForm.regionId) return
+    waypointPlanTimer = window.setTimeout(() => {
+      void submitRoute()
+    }, 300)
+  },
+  { deep: true }
+)
+
+// 起点/终点/策略/交通方式变化时自动重算（300ms 防抖）
+let routeAutoTimer: number | null = null
+watch(
+  () => [routeForm.startNodeId, routeForm.endNodeId, routeForm.strategy, routeForm.transportModes.slice()],
+  () => {
+    if (routeAutoTimer) {
+      clearTimeout(routeAutoTimer)
+      routeAutoTimer = null
+    }
+    if (!routeForm.regionId) return
+    const hasWaypoints = waypoints.value.some((w) => typeof w.payload?.id === 'number')
+    const hasStartEnd = !!routeForm.startNodeId && !!routeForm.endNodeId
+    if (!hasWaypoints && !hasStartEnd) return
+    routeAutoTimer = window.setTimeout(() => {
+      void submitRoute()
+    }, 300)
+  },
+  { deep: true }
+)
+
 const resetRouteForm = () => {
   const defaults = createRoutingDefaults()
   hydrateRouteForm(defaults)
@@ -298,6 +425,7 @@ const resetRouteForm = () => {
   selectedRegion.value = null
   selectedStartNode.value = null
   selectedEndNode.value = null
+  waypoints.value = []
 }
 
 const applySample = (index: number) => {
@@ -309,6 +437,7 @@ const applySample = (index: number) => {
   selectedRegion.value = null
   selectedStartNode.value = null
   selectedEndNode.value = null
+  waypoints.value = []
 }
 </script>
 
@@ -371,7 +500,7 @@ const applySample = (index: number) => {
             <button
               type="button"
               @click="submitRoute"
-              :disabled="routeLoading || !routeForm.regionId || !routeForm.startNodeId || !routeForm.endNodeId"
+              :disabled="routeLoading || !routeForm.regionId || (!routeForm.startNodeId && !routeForm.endNodeId && waypoints.length === 0)"
               class="flex items-center gap-2 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 px-4 py-2.5 text-white font-semibold shadow-lg transition hover:shadow-xl hover:from-emerald-600 hover:to-teal-700 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {{ routeLoading ? '🔄 规划中…' : '🗺️ 生成路线' }}
@@ -421,6 +550,64 @@ const applySample = (index: number) => {
             </div>
           </div>
 
+          <!-- 多点路线 -->
+          <div class="rounded-lg bg-slate-50 p-3 space-y-3">
+            <div class="flex items-center justify-between">
+              <span class="text-xs font-semibold text-slate-600">➕ 多点路线</span>
+              <button
+                type="button"
+                class="rounded-md border border-slate-300 bg-white px-2 py-1 text-xs text-slate-700 hover:border-emerald-500 hover:text-emerald-600"
+                :disabled="!routeForm.regionId"
+                @click="addWaypoint"
+              >+ 添加地点</button>
+            </div>
+            <div class="space-y-2">
+              <div
+                v-for="(wp, idx) in waypoints"
+                :key="idx"
+                class="flex items-center gap-2"
+                :class="{ 'ring-2 ring-emerald-400 rounded-md bg-emerald-50': dragHoverIndex === idx, 'opacity-70': dragState.from === idx }"
+                draggable="true"
+                @dragstart="onWaypointDragStart(idx, $event)"
+                @dragover.prevent
+                @dragenter.prevent="onWaypointDragEnter(idx)"
+                @dragleave.prevent="onWaypointDragLeave(idx)"
+                @drop="onWaypointDrop(idx, $event)"
+              >
+                <div class="w-6 text-xs font-semibold text-slate-600 text-center">{{ idx + 1 }}</div>
+                <div class="flex-1">
+                  <KeywordSearchSelect
+                    v-model="waypoints[idx]"
+                    :search="searchStartNodeOptions"
+                    placeholder="选择途经点"
+                    :disabled="!routeForm.regionId"
+                    @select="(opt) => handleWaypointSelect(idx, opt)"
+                    @clear="() => handleWaypointClear(idx)"
+                  />
+                </div>
+                <button
+                  type="button"
+                  class="rounded-md border border-slate-300 bg-white px-2 py-1 text-xs text-slate-700 hover:border-rose-500 hover:text-rose-600"
+                  @click="removeWaypoint(idx)"
+                >移除</button>
+                <div class="flex items-center gap-1">
+                  <button
+                    type="button"
+                    class="rounded-md border border-slate-300 bg-white px-2 py-1 text-xs text-slate-700 hover:border-slate-500"
+                    :disabled="idx === 0"
+                    @click="moveWaypointUp(idx)"
+                  >↑</button>
+                  <button
+                    type="button"
+                    class="rounded-md border border-slate-300 bg-white px-2 py-1 text-xs text-slate-700 hover:border-slate-500"
+                    :disabled="idx === waypoints.length - 1"
+                    @click="moveWaypointDown(idx)"
+                  >↓</button>
+                </div>
+              </div>
+            </div>
+          </div>
+
           <!-- 快速示例 -->
           <div class="rounded-lg bg-slate-50 p-3">
             <span class="text-xs font-semibold text-slate-600">⚡ 快速示例</span>
@@ -447,6 +634,8 @@ const applySample = (index: number) => {
             :plan="plan"
             :tile="mapTile"
             :loading="mapLoading || routeLoading"
+            :waypoint-node-ids="waypoints.map(w => w.payload?.id).filter(id => typeof id === 'number')"
+            :waypoint-order="waypoints.map((_, i) => i + 1)"
           />
         </div>
       </div>
