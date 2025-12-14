@@ -6,6 +6,7 @@ from .partial_sort import PartialSorter, RankedItem, top_k, top_k_with_scores
 from .shortest_path import Edge, PathResult, PathSegment, WeightStrategy, shortest_path
 from .spatial_index import BoundingBox, RTree
 from .tsp import TourComputationError, TourLeg, TourResult, compute_tour
+from .branch_bound import BranchBoundError, PathOrderResult, compute_pair_paths, compute_path_branch_and_bound
 
 __all__ = [
 	"PartialSorter",
@@ -27,4 +28,8 @@ __all__ = [
 	"TourResult",
 	"TourComputationError",
 	"compute_tour",
+	"BranchBoundError",
+	"PathOrderResult",
+	"compute_pair_paths",
+	"compute_path_branch_and_bound",
 ]

@@ -20,6 +20,8 @@ const props = withDefaults(
     initialCenter?: [number, number]
     initialZoom?: number
     showRoads?: boolean
+    waypointNodeIds?: number[]
+    waypointOrder?: number[]
   }>(),
   {
     plan: null,
@@ -29,6 +31,8 @@ const props = withDefaults(
     initialCenter: () => [39.9042, 116.4074] as [number, number],
     initialZoom: 14,
     showRoads: false,
+    waypointNodeIds: () => [],
+    waypointOrder: () => [],
   }
 )
 
@@ -65,6 +69,13 @@ const nodePoints = computed((): Array<{
 })
 const startNodeId = computed(() => nodePoints.value[0]?.id ?? null)
 const endNodeId = computed(() => nodePoints.value[nodePoints.value.length - 1]?.id ?? null)
+const waypointIdSet = computed(() => new Set((props.waypointNodeIds ?? []).filter((n) => typeof n === 'number')))
+const waypointIndexMap = computed(() => {
+  const ids = props.waypointNodeIds ?? []
+  const map = new Map<number, number>()
+  ids.forEach((id, i) => { if (typeof id === 'number') map.set(id, i + 1) })
+  return map
+})
 
 const facilityPoints = computed(() =>
   (props.facilities ?? [])
@@ -358,14 +369,15 @@ const placeholderContent = computed(() => {
           :key="node.id"
           :lat-lng="node.coords"
           :radius="node.id === startNodeId || node.id === endNodeId ? 8 : 6"
-          :color="node.id === startNodeId ? '#16a34a' : node.id === endNodeId ? '#dc2626' : '#1d4ed8'"
-          :fill-color="node.id === startNodeId ? '#4ade80' : node.id === endNodeId ? '#f87171' : '#3b82f6'"
+          :color="node.id === startNodeId ? '#16a34a' : node.id === endNodeId ? '#dc2626' : waypointIdSet.has(node.id) ? '#ea580c' : '#1d4ed8'"
+          :fill-color="node.id === startNodeId ? '#4ade80' : node.id === endNodeId ? '#f87171' : waypointIdSet.has(node.id) ? '#fb923c' : '#3b82f6'"
           :fill-opacity="0.95"
           :weight="2"
         >
           <LTooltip>
             <div class="tooltip">
               <span class="order">#{{ node.order }}</span>
+              <span v-if="waypointIdSet.has(node.id)" class="order waypoint">途经 {{ waypointIndexMap.get(node.id) }}</span>
               <span>{{ node.label }}</span>
             </div>
           </LTooltip>
@@ -549,6 +561,10 @@ const placeholderContent = computed(() => {
 
 .order.facility {
   color: #0f766e;
+}
+
+.order.waypoint {
+  color: #ea580c;
 }
 
 .meta {
