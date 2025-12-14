@@ -3,6 +3,7 @@
 import asyncio
 from app.core.db import get_session_maker
 from app.services.diary import DiaryService
+from app.services.media_storage import get_media_storage_service
 from app.schemas.diary import DiaryCreateRequest
 from app.models.enums import DiaryStatus
 
@@ -11,7 +12,7 @@ async def demo_diary_features():
     """演示日记系统的核心功能"""
     maker = get_session_maker()
     async with maker() as session:
-        service = DiaryService(None)  # We'll create a service instance
+        service = DiaryService(None, get_media_storage_service())  # We'll create a service instance
         service.repo = None  # Skip repo for this demo
 
         print("=== 旅游日记系统功能演示 ===\n")

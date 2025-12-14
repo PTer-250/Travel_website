@@ -35,7 +35,8 @@ class DiaryRepository:
         filename: str,
         content_type: str,
         media_type: DiaryMediaType,
-        payload: bytes,
+        storage_path: str,
+        storage_backend: str,
         is_compressed: bool,
         original_size: int,
         compressed_size: int,
@@ -47,10 +48,11 @@ class DiaryRepository:
             filename=filename,
             content_type=content_type,
             media_type=media_type,
-            data=payload,
             is_compressed=is_compressed,
             original_size=original_size,
             compressed_size=compressed_size,
+            storage_path=storage_path,
+            storage_backend=storage_backend,
         )
         self.session.add(media)
         await self.session.flush()

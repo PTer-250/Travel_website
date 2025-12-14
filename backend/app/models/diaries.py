@@ -71,7 +71,8 @@ class DiaryMedia(TimestampMixin, BaseModel, table=True):
     original_size: int = Field(ge=0)
     compressed_size: int = Field(ge=0)
     is_compressed: bool = Field(default=False)
-    data: bytes = Field(sa_column=Column(LargeBinary, nullable=False))
+    storage_path: str = Field(max_length=500)
+    storage_backend: str = Field(default="local", max_length=50)
 
     diary: "Diary" = Relationship(back_populates="media_items")
 

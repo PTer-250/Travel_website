@@ -16,6 +16,7 @@ from app.repositories.session import get_session
 from app.repositories.users import UserRepository
 from app.services import FacilityService, RecommendationService, RoutingService, SearchService
 from app.services.diary import DiaryService
+from app.services.media_storage import get_media_storage_service
 from app.services.map_data import MapDataService
 
 
@@ -90,7 +91,8 @@ async def get_diary_service(
     """Provide a :class:`~app.services.diary.DiaryService` instance."""
 
     diary_repository = DiaryRepository(session)
-    return DiaryService(diary_repository)
+    storage_service = get_media_storage_service()
+    return DiaryService(diary_repository, storage_service)
 
 
 async def get_current_user(user: User = Depends(_current_active_user)) -> User:

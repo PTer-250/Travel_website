@@ -75,7 +75,7 @@ backend/
 	- 输出位于 `data/generated/`，包含 `regions.json`、`buildings.json`、`facilities.json`、`graph_nodes.json`、`graph_edges.json`。
 	- 可使用 `--populate-db` 在生成后自动导入数据库；`--keep-existing` 可保留现有数据。
 
-2. **初始化数据库**（导入地图并写入示例日记）：
+2. **初始化数据库**（导入地图数据）：
 
 	```powershell
 	# 如果已生成数据，可直接使用 auto import
@@ -85,7 +85,8 @@ backend/
 	uv run python scripts/init_db.py --dataset-dir data/generated --keep-existing
 	```
 
-	脚本会创建 SQLite 模式、导入真实地图 JSON，并从 `data/samples/` 目录下的 `sample_users.json`、`sample_diaries.json`、`sample_diary_ratings.json` 读取示例用户/日记/评分后写入数据库。
+	脚本会创建 SQLite 模式并导入生成的地图 JSON。
+	如需写入示例日记数据，请手动运行 `uv run python scripts/seed_sample_diaries.py --enable`（可选）。
 
 3. **维护辅助脚本**（按需执行）：
 
@@ -94,6 +95,12 @@ backend/
 	uv run python scripts/optimize_indexes.py  # 优化数据库索引
 	uv run python scripts/demo_features.py     # 展示后台能力
 	```
+
+### 媒体文件存储
+
+- 所有日记/论坛媒体都会落地到 `storage/media/<diary_id>/` 目录，数据库仅保存 `storage_path`、`storage_backend` 等元信息。
+- 可通过 `.env` 或环境变量覆盖 `media_storage_root`、`media_storage_backend`，例如将根目录指向 NAS/对象存储挂载点。
+- 若需要迁移旧数据，可先导出现有 `diary_media` 记录，再将 `storage_path` 指向新位置，后端接口会自动根据路径读取/删除文件。
 
 ## 核心API接口
 
