@@ -28,8 +28,8 @@ __all__ = [
 	"TourResult",
 	"TourComputationError",
 	"compute_tour",
-    "BranchBoundError",
-    "PathOrderResult",
-    "compute_pair_paths",
-    "compute_path_branch_and_bound",
+	"BranchBoundError",
+	"PathOrderResult",
+	"compute_pair_paths",
+	"compute_path_branch_and_bound",
 ]
