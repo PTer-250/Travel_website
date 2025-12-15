@@ -312,7 +312,7 @@ def main() -> None:
     import argparse
 
     parser = argparse.ArgumentParser(
-        description="Initialize the SQLite schema, import generated map data, and seed demo diaries.",
+        description="Initialize the SQLite schema and import generated map data.",
     )
     parser.add_argument(
         "--keep-existing",

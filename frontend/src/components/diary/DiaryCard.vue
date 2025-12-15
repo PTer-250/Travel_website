@@ -5,11 +5,11 @@
   >
     <!-- 封面图片 -->
     <div
-      v-if="diary.cover_image"
+      v-if="coverUrl"
       class="relative aspect-[4/5] w-full overflow-hidden bg-slate-100"
     >
       <img
-        :src="diary.cover_image"
+        :src="coverUrl"
         :alt="diary.title"
         class="h-full w-full object-cover transition-transform duration-500 group-hover:scale-105"
         loading="lazy"
@@ -191,6 +191,31 @@ const props = defineProps<Props>()
 const emit = defineEmits<Emits>()
 
 const contentPreview = computed(() => props.diary.content_preview?.trim() ?? '')
+
+const coverUrl = computed(() => {
+  const diaryAny = props.diary as any
+  const direct = (props.diary.cover_image || diaryAny.coverImage || diaryAny.cover) as string | undefined
+  if (direct && typeof direct === 'string' && direct.trim().length > 0) {
+    return direct
+  }
+
+  const mediaUrls = diaryAny.media_urls as unknown
+  if (Array.isArray(mediaUrls) && typeof mediaUrls[0] === 'string' && mediaUrls[0].trim().length > 0) {
+    return mediaUrls[0]
+  }
+
+  const mediaItems = diaryAny.media_items as unknown
+  if (Array.isArray(mediaItems)) {
+    const firstImage = mediaItems.find(
+      (it: any) => (it?.media_type === 'image' || it?.media_type === 'IMAGE') && typeof it?.url === 'string'
+    )
+    if (firstImage?.url) {
+      return firstImage.url as string
+    }
+  }
+
+  return ''
+})
 
 const handleClick = () => {
   emit('click', props.diary)

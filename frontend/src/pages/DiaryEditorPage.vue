@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, reactive, ref } from 'vue'
+import heic2any from 'heic2any'
 import { storeToRefs } from 'pinia'
 import { useRouter } from 'vue-router'
 import type { Editor } from '@tiptap/core'
@@ -17,13 +18,14 @@ import TagInput from '../components/ui/TagInput.vue'
 import SuccessAlert from '../components/ui/SuccessAlert.vue'
 import ErrorAlert from '../components/ui/ErrorAlert.vue'
 import { useApiRequest } from '../composables/useApiRequest'
-import { createDiary, searchRegions } from '../services/api'
+import { createDiary, fetchDiaryDetail, searchRegions } from '../services/api'
 import DiaryMedia from '../components/editor/extensions/diaryMedia'
 import { useAuthStore } from '../stores/auth'
 
 import type {
   DiaryCreateRequest,
   DiaryCreateResponse,
+  DiaryDetail,
   DiaryMediaType,
   DiaryMediaUpload,
   DiaryStatus,
@@ -81,6 +83,8 @@ const tiptapEditor = useEditor({
 })
 
 const createdDiary = ref<DiaryCreateResponse | null>(null)
+const createdDiaryDetail = ref<DiaryDetail | null>(null)
+const mediaConvertError = ref<string | null>(null)
 const submitted = ref(false)
 const touched = reactive({
   title: false,
@@ -231,13 +235,42 @@ const triggerMediaUpload = () => {
   fileInputRef.value?.click()
 }
 
-const handleMediaFilesSelected = (event: Event) => {
+const isHeicLike = (file: File): boolean => {
+  const mime = (file.type || '').toLowerCase()
+  if (mime === 'image/heic' || mime === 'image/heif' || mime === 'image/heic-sequence' || mime === 'image/heif-sequence') {
+    return true
+  }
+  const name = (file.name || '').toLowerCase()
+  return name.endsWith('.heic') || name.endsWith('.heif')
+}
+
+const convertHeicToJpeg = async (file: File): Promise<File> => {
+  const blob = (await heic2any({ blob: file, toType: 'image/jpeg', quality: 0.92 })) as Blob
+  const base = (file.name || 'upload').replace(/\.[^/.]+$/, '')
+  return new File([blob], `${base}.jpg`, { type: 'image/jpeg', lastModified: Date.now() })
+}
+
+const handleMediaFilesSelected = async (event: Event) => {
   const input = event.target as HTMLInputElement
   const instance = tiptapEditor.value
   if (!input.files || !instance) return
 
+  mediaConvertError.value = null
+
   const files = Array.from(input.files)
-  files.forEach((file) => {
+  for (const originalFile of files) {
+    let file = originalFile
+    try {
+      if (isHeicLike(file)) {
+        file = await convertHeicToJpeg(file)
+      }
+    } catch (e) {
+      console.error('HEIC conversion failed', e)
+      mediaConvertError.value = 'HEIC/HEIF 图片当前浏览器无法直接预览，且转换失败。请将照片导出为 JPG/PNG 后再上传。'
+      // 转换失败时跳过该文件，避免插入灰块占位
+      continue
+    }
+
     const mediaType: DiaryMediaType = file.type.startsWith('video') ? 'video' : 'image'
     const placeholder = generatePlaceholder(mediaType)
     // 生成与占位符绑定的安全文件名，避免泄露用户本地文件名
@@ -296,7 +329,7 @@ const handleMediaFilesSelected = (event: Event) => {
         filename: upload.filename,
       })
       .run()
-  })
+  }
 
   form.contentHtml = instance.getHTML()
   syncMediaUploadsWithContent(instance)
@@ -316,6 +349,7 @@ const resetForm = () => {
   selectedRegion.value = null
   tags.value = []
   createdDiary.value = null
+  createdDiaryDetail.value = null
   submitted.value = false
   touched.title = false
   touched.region = false
@@ -407,9 +441,17 @@ const handleSubmit = async () => {
       mediaUploads.value.map((item) => item.upload)
     )
     createdDiary.value = response
+    try {
+      createdDiaryDetail.value = await fetchDiaryDetail(response.id)
+    } catch (e) {
+      // 如果详情拉取失败，仍然视为创建成功（用户可通过“查看详情”进入）
+      createdDiaryDetail.value = null
+      console.warn('Failed to fetch created diary detail', e)
+    }
   } catch (error) {
     console.error('Failed to create diary', error)
     createdDiary.value = null
+    createdDiaryDetail.value = null
   }
 }
 
@@ -552,11 +594,53 @@ onBeforeUnmount(() => {
               <input
                 ref="fileInputRef"
                 type="file"
-                accept="image/*,video/*"
+                accept="image/*,video/*,.heic,.heif"
                 multiple
                 class="hidden"
                 @change="handleMediaFilesSelected"
               />
+
+              <ErrorAlert v-if="mediaConvertError" class="mb-3" :message="mediaConvertError" />
+
+              <div v-if="mediaUploads.length > 0" class="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                <div class="flex items-center justify-between">
+                  <div class="text-sm font-medium text-slate-700">已选择媒体（{{ mediaUploads.length }}）</div>
+                  <div class="text-xs text-slate-400">发布成功后将自动上传</div>
+                </div>
+                <div class="mt-3 grid grid-cols-2 gap-3 md:grid-cols-4">
+                  <div
+                    v-for="item in mediaUploads"
+                    :key="item.placeholder"
+                    class="overflow-hidden rounded-lg bg-slate-200"
+                  >
+                    <img
+                      v-if="item.type === 'image'"
+                      :src="item.previewUrl"
+                      alt=""
+                      class="h-28 w-full object-cover"
+                    />
+                    <video
+                      v-else
+                      :src="item.previewUrl"
+                      class="h-28 w-full object-cover"
+                      muted
+                      playsinline
+                      preload="metadata"
+                      controls
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div v-if="createdDiary" class="rounded-xl border border-emerald-200 bg-emerald-50 p-4">
+                <div class="text-sm font-medium text-emerald-800">发布成功</div>
+                <div class="mt-1 text-xs text-emerald-700">
+                  {{ createdDiaryDetail?.media_items?.length ? `已上传媒体：${createdDiaryDetail.media_items.length}` : '媒体上传状态：可点击“查看详情”确认' }}
+                </div>
+                <div v-if="createdDiaryDetail?.cover_image" class="mt-3 overflow-hidden rounded-lg bg-slate-200">
+                  <img :src="createdDiaryDetail.cover_image" alt="" class="w-full max-h-56 object-cover" />
+                </div>
+              </div>
 
               <div class="editor-shell" @focus="handleFocus('content')">
                 <EditorContent :editor="tiptapEditor || undefined" />

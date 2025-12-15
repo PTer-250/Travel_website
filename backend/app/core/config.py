@@ -18,6 +18,9 @@ class Settings(BaseSettings):
     database_url: str = "sqlite+aiosqlite:///./data/travel.db"
     redis_url: str = "redis://localhost:6379"
     cache_ttl: int = 300  # 5 minutes default TTL
+    media_storage_root: str = "storage/media"
+    media_storage_backend: str = "local"
+    media_storage_url_prefix: str = "/media"
     cors_allowed_origins: list[str] = [
         "http://localhost:5173",
         "http://127.0.0.1:5173",

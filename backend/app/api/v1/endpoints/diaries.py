@@ -30,6 +30,7 @@ from app.models.enums import DiaryMediaType, DiaryStatus
 from app.models.users import User
 from app.repositories.diaries import DiaryRepository
 from app.services.diary import DiaryService, PendingDiaryMedia
+from app.services.media_storage import get_media_storage_service, build_public_media_url
 from app.algorithms.diary_compression import compression_service
 from app.schemas.diary import (
     DiaryCreateRequest,
@@ -60,7 +61,8 @@ router = APIRouter(prefix="/diaries", tags=["diaries"])
 def _get_diary_service(session: AsyncSession = Depends(deps.get_db_session)) -> DiaryService:
     """Get diary service instance."""
     repo = DiaryRepository(session)
-    return DiaryService(repo)
+    storage = get_media_storage_service()
+    return DiaryService(repo, storage)
 
 
 def _build_content_disposition(filename: Optional[str], disposition: str = "inline") -> str:
@@ -85,7 +87,11 @@ def _select_cover_image(diary) -> Optional[str]:
     """Choose an image URL to use as diary cover if available."""
     if diary.media_urls and diary.media_types:
         for url, media_type in zip(diary.media_urls, diary.media_types):
-            if media_type == DiaryMediaType.IMAGE:
+            if isinstance(media_type, DiaryMediaType):
+                is_image = media_type == DiaryMediaType.IMAGE
+            else:
+                is_image = str(media_type).lower() == DiaryMediaType.IMAGE.value.lower()
+            if is_image:
                 return url
     return None
 
@@ -427,20 +433,30 @@ async def get_diary(
         )
 
     ordered_media_items = sorted(diary.media_items, key=lambda media: media.id)
-    media_items_payload = [
-        DiaryMediaItem(
-            id=media.id,
-            placeholder=media.placeholder,
-            filename=media.filename,
-            content_type=media.content_type,
-            media_type=media.media_type,
-            url=f"{settings.api_prefix}{settings.api_v1_prefix}/diaries/{diary.id}/media/{media.id}",
-            original_size=media.original_size,
-            compressed_size=media.compressed_size,
-            is_compressed=media.is_compressed,
-        )
-        for media in ordered_media_items
+    base_media_urls = diary.media_urls or [
+        build_public_media_url(media.storage_path) for media in ordered_media_items
     ]
+
+    media_items_payload: List[DiaryMediaItem] = []
+    for idx, media in enumerate(ordered_media_items):
+        if idx < len(base_media_urls):
+            url = base_media_urls[idx]
+        else:
+            url = build_public_media_url(media.storage_path)
+        media_items_payload.append(
+            DiaryMediaItem(
+                id=media.id,
+                placeholder=media.placeholder,
+                filename=media.filename,
+                content_type=media.content_type,
+                media_type=media.media_type,
+                url=url,
+                original_size=media.original_size,
+                compressed_size=media.compressed_size,
+                is_compressed=media.is_compressed,
+            )
+        )
+
     if media_items_payload:
         media_urls = [item.url for item in media_items_payload]
         media_types = [item.media_type for item in media_items_payload]

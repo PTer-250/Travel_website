@@ -8,7 +8,6 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Dict, List, Optional, TYPE_CHECKING
 from uuid import UUID
-from urllib.parse import urljoin
 
 from app.algorithms.diary_ranking import ranking_algorithm
 from app.algorithms.diary_compression import compression_service
@@ -23,6 +22,7 @@ from app.schemas.diary import (
     DiaryUpdateRequest,
 )
 from app.services.cache_service import diary_cache_service
+from app.services.media_storage import MediaStorageService, build_public_media_url
 
 if TYPE_CHECKING:
     from app.models.locations import Region
@@ -42,8 +42,9 @@ class PendingDiaryMedia:
 class DiaryService:
     """Business logic for diary operations."""
 
-    def __init__(self, repo: DiaryRepository):
+    def __init__(self, repo: DiaryRepository, media_storage: MediaStorageService):
         self.repo = repo
+        self.media_storage = media_storage
         self._media_placeholder_pattern = re.compile(r"\{\{media:(?P<key>[a-zA-Z0-9_\-\.]+)\}\}")
 
     async def create_diary(
@@ -81,19 +82,35 @@ class DiaryService:
         placeholder_to_media: Dict[str, DiaryMedia] = {}
         ordered_media: List[DiaryMedia] = []
         for upload in media_uploads:
-            payload, is_media_compressed, _ = media_compression_service.compress(upload.data)
-            if not is_media_compressed:
-                payload = upload.data
+            compression_result = media_compression_service.compress(
+                upload.data,
+                content_type=upload.content_type,
+                filename=upload.filename,
+                is_image=upload.media_type == DiaryMediaType.IMAGE,
+            )
+
+            payload = compression_result.payload
+            is_media_compressed = compression_result.is_compressed
+            filename_value = compression_result.filename or upload.filename or "media"
+            content_type_value = (
+                compression_result.content_type
+                or upload.content_type
+                or "application/octet-stream"
+            )
+
+            stored_media = await self.media_storage.save(created.id, filename_value, payload)
+
             media_record = await self.repo.add_media(
                 diary_id=created.id,
                 placeholder=upload.placeholder,
-                filename=upload.filename,
-                content_type=upload.content_type,
+                filename=filename_value,
+                content_type=content_type_value,
                 media_type=upload.media_type,
-                payload=payload,
+                storage_path=stored_media.relative_path,
+                storage_backend=stored_media.backend,
                 is_compressed=is_media_compressed,
                 original_size=len(upload.data),
-                compressed_size=len(payload),
+                compressed_size=stored_media.size,
             )
             placeholder_to_media[upload.placeholder] = media_record
             ordered_media.append(media_record)
@@ -112,8 +129,8 @@ class DiaryService:
         created.content = rendered_content
         created.compressed_content = compressed_data if is_text_compressed else None
         created.is_compressed = is_text_compressed
-        created.media_urls = [self._build_media_url(created.id, media.id) for media in ordered_media]
-        created.media_types = [media.media_type for media in ordered_media]
+        created.media_urls = [build_public_media_url(media.storage_path) for media in ordered_media]
+        created.media_types = [media.media_type.value for media in ordered_media]
         created.updated_at = datetime.utcnow()
 
         updated = await self.repo.update(created)
@@ -192,7 +209,7 @@ class DiaryService:
     def _render_media_element(self, diary_id: int, media: DiaryMedia) -> str:
         """Render a media element (image/video) as HTML."""
 
-        media_url = self._build_media_url(diary_id, media.id)
+        media_url = build_public_media_url(media.storage_path)
         # 不再在正文中展示文件名，避免泄露与干扰排版
 
         if media.media_type == DiaryMediaType.IMAGE:
@@ -210,13 +227,6 @@ class DiaryService:
             f'<video controls preload="metadata" src="{media_url}"></video>'
             '</figure>'
         )
-
-    def _build_media_url(self, diary_id: int, media_id: int) -> str:
-        """Build the public API URL for a diary media resource."""
-
-        base = settings.public_api_url.rstrip("/") + "/"
-        path = f"{settings.api_prefix}{settings.api_v1_prefix}/diaries/{diary_id}/media/{media_id}"
-        return urljoin(base, path.lstrip("/"))
 
     async def get_diary(
         self,
@@ -246,8 +256,8 @@ class DiaryService:
         if diary and diary.media_items:
             ordered_media = sorted(diary.media_items, key=lambda item: (item.id or 0))
             diary_id_int = int(diary.id or 0)
-            diary.media_urls = [self._build_media_url(diary_id_int, int(item.id or 0)) for item in ordered_media]
-            diary.media_types = [item.media_type for item in ordered_media]
+            diary.media_urls = [build_public_media_url(item.storage_path) for item in ordered_media]
+            diary.media_types = [item.media_type.value for item in ordered_media]
 
             content_html = diary.content or ""
             # 若内容包含占位符，则在读取时按占位符就地渲染为 HTML，保持原始顺序
@@ -308,8 +318,8 @@ class DiaryService:
         if diary.media_items:
             ordered = sorted(diary.media_items, key=lambda item: (item.id or 0))
             diary_id_int = int(diary.id or 0)
-            diary.media_urls = [self._build_media_url(diary_id_int, int(item.id or 0)) for item in ordered]
-            diary.media_types = [item.media_type for item in ordered]
+            diary.media_urls = [build_public_media_url(item.storage_path) for item in ordered]
+            diary.media_types = [item.media_type.value for item in ordered]
         
         return await self.repo.update(diary)
 
@@ -319,7 +329,7 @@ class DiaryService:
     user_id: UUID,
     ) -> bool:
         """Delete a diary (requires ownership)."""
-        diary = await self.repo.get_by_id(diary_id, load_relationships=False)
+        diary = await self.repo.get_by_id(diary_id, load_relationships=True)
         
         if not diary:
             return False
@@ -328,6 +338,9 @@ class DiaryService:
         if diary.user_id != user_id:
             raise PermissionError("You can only delete your own diaries")
         
+        for media in diary.media_items:
+            await self.media_storage.delete(media.storage_path)
+
         await self.repo.delete(diary)
         return True
 
@@ -552,12 +565,11 @@ class DiaryService:
             return None
 
         try:
-            payload = media_compression_service.decompress(media.data, media.is_compressed)
-        except ValueError as exc:
-            # Fallback to stored data if decompression fails
-            print(f"Media decompression failed for media {media_id}: {exc}")
-            payload = media.data
+            stored_bytes = await self.media_storage.read(media.storage_path)
+        except FileNotFoundError:
+            return None
 
+        payload = media_compression_service.decompress(stored_bytes, media.is_compressed)
         return media, payload
 
     async def search_diaries(
