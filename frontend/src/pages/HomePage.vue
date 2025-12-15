@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { onMounted, computed } from 'vue'
 import { useRouter } from 'vue-router'
-import PageSection from '../components/ui/PageSection.vue'
 import LoadingIndicator from '../components/ui/LoadingIndicator.vue'
 import ErrorAlert from '../components/ui/ErrorAlert.vue'
 import EmptyState from '../components/ui/EmptyState.vue'

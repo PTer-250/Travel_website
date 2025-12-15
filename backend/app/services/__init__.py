@@ -19,6 +19,8 @@ from .routing import (
 )
 from .map_data import MapDataService
 from .search import SearchService
+from .agent import AgentService
+from .xhs_search import XhsSearchService
 
 __all__ = [
     "top_k_by_score",
@@ -37,4 +39,6 @@ __all__ = [
     "RouteNotFoundError",
     "MapDataService",
     "SearchService",
+    "AgentService",
+    "XhsSearchService",
 ]

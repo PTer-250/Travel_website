@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import List, Optional
 from uuid import UUID
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.models.enums import DiaryMediaType, DiaryStatus
 
@@ -16,8 +16,7 @@ class UserSummary(BaseModel):
     id: UUID
     username: str
     
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # ===== Region Summary =====
@@ -29,8 +28,7 @@ class RegionSummary(BaseModel):
     type: str
     city: Optional[str] = None
     
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # ===== Diary Request Schemas =====
@@ -92,8 +90,7 @@ class DiaryListItem(BaseModel):
     created_at: datetime
     updated_at: datetime
     
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class DiaryMediaItem(BaseModel):
@@ -132,8 +129,7 @@ class DiaryDetail(BaseModel):
     created_at: datetime
     updated_at: datetime
     
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class DiaryCreateResponse(BaseModel):
@@ -165,8 +161,7 @@ class DiaryRatingResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
     
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class DiaryRatingUser(BaseModel):
@@ -175,8 +170,7 @@ class DiaryRatingUser(BaseModel):
     id: UUID
     username: str
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class DiaryRatingItem(DiaryRatingResponse):
@@ -271,8 +265,7 @@ class DiaryAnimationResponse(BaseModel):
     error_message: Optional[str]
     created_at: datetime
     
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # ===== Query Parameters =====

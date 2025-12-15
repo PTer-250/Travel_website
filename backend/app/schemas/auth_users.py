@@ -7,7 +7,7 @@ from typing import List, Optional
 from uuid import UUID
 
 from fastapi_users import schemas as fu_schemas
-from pydantic import EmailStr, Field, field_validator
+from pydantic import ConfigDict, EmailStr, Field, field_validator
 
 
 class UserRead(fu_schemas.BaseUser[UUID]):
@@ -19,8 +19,7 @@ class UserRead(fu_schemas.BaseUser[UUID]):
     created_at: datetime
     updated_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class UserCreate(fu_schemas.BaseUserCreate):

@@ -2,6 +2,7 @@
 
 from .base import BaseModel, TimestampMixin
 from .diaries import Diary, DiaryRating
+from .agent import Conversation, Message
 from .enums import (
 	BuildingCategory,
 	DiaryMediaType,
@@ -19,6 +20,8 @@ __all__ = [
 	"TimestampMixin",
 	"Diary",
 	"DiaryRating",
+	"Conversation",
+	"Message",
 	"BuildingCategory",
 	"DiaryMediaType",
 	"DiaryStatus",

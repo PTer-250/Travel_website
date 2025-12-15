@@ -42,6 +42,7 @@ npm run build
 cd backend
 # 安装依赖
 uv sync
+npm install
 # 首次使用需初始化数据库
 uv run python scripts/init_db.py
 

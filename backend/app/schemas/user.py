@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import List, Optional
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class UserBase(BaseModel):
@@ -42,5 +42,5 @@ class UserPublic(UserBase):
 	created_at: datetime
 	updated_at: datetime
 
-	class Config:
-		from_attributes = True
+	# Allow reading from SQLAlchemy/ORM objects.
+	model_config = ConfigDict(from_attributes=True)

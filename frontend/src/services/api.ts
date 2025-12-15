@@ -219,6 +219,12 @@ import type {
   DiaryAnimation,
   DiaryMediaUpload,
 } from '../types/diary'
+import type {
+  AgentChatResponse,
+  AgentConversation,
+  AgentMessage,
+  AgentStreamStatus,
+} from '../types/agent'
 
 /**
  * Get personalized diary recommendations
@@ -419,4 +425,198 @@ export const fetchUserDiaries = async (
   })
 
   return data
+}
+
+// ===== Agent Chat API =====
+
+export interface AgentStreamHandlers {
+  onConversation?(conversationId: number): void
+  onMessage?(message: AgentMessage): void
+  onDelta?(delta: string): void
+  onStatus?(payload: AgentStreamStatus): void
+  onDone?(): void
+  onError?(error: Error): void
+}
+
+const parseSseEvent = (rawEvent: string): { event?: string; data?: string } => {
+  const lines = rawEvent.split(/\r?\n/)
+  let eventName: string | undefined
+  const dataLines: string[] = []
+
+  for (const line of lines) {
+    if (line.startsWith('event:')) {
+      eventName = line.slice(6).trim()
+    } else if (line.startsWith('data:')) {
+      let value = line.slice(5)
+      if (value.startsWith(' ')) {
+        value = value.slice(1)
+      }
+      if (value.endsWith('\r')) {
+        value = value.slice(0, -1)
+      }
+      dataLines.push(value)
+    }
+  }
+
+  return {
+    event: eventName,
+    data: dataLines.join('\n'),
+  }
+}
+
+export const fetchAgentConversations = async (): Promise<AgentConversation[]> => {
+  const { data } = await apiClient.get<{ items: AgentConversation[] }>('/agent/conversations')
+  return data.items
+}
+
+export const fetchAgentMessages = async (
+  conversationId: number
+): Promise<AgentMessage[]> => {
+  const { data } = await apiClient.get<{ items: AgentMessage[] }>(
+    `/agent/conversations/${conversationId}/messages`
+  )
+  return data.items
+}
+
+export const deleteAgentConversation = async (conversationId: number): Promise<void> => {
+  await apiClient.delete(`/agent/conversations/${conversationId}`)
+}
+
+export const sendAgentMessage = async (
+  content: string,
+  conversationId?: number | null
+): Promise<AgentChatResponse> => {
+  const payload = {
+    content,
+    conversation_id: conversationId ?? undefined,
+  }
+  const { data } = await apiClient.post<AgentChatResponse>('/agent/chat', payload)
+  return data
+}
+
+export const streamAgentMessage = async (
+  content: string,
+  conversationId: number | null | undefined,
+  handlers: AgentStreamHandlers,
+  accessToken?: string | null
+): Promise<void> => {
+  const payload = {
+    content,
+    conversation_id: conversationId ?? undefined,
+  }
+  const controller = new AbortController()
+  const baseURL = apiClient.defaults.baseURL ?? ''
+  const url = `${baseURL.replace(/\/$/, '')}/agent/chat/stream`
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    Accept: 'text/event-stream',
+  }
+  if (accessToken) {
+    headers.Authorization = `Bearer ${accessToken}`
+  }
+
+  const dispatchPayload = (rawEvent: string): boolean => {
+    const { data } = parseSseEvent(rawEvent)
+    if (!data) {
+      return true
+    }
+    let parsed: any
+    try {
+      parsed = JSON.parse(data)
+    } catch (error) {
+      console.warn('Failed to parse SSE payload', error, data)
+      return true
+    }
+
+    switch (parsed.type) {
+      case 'conversation':
+        handlers.onConversation?.(parsed.conversation_id)
+        return true
+      case 'message':
+        handlers.onMessage?.(parsed.message as AgentMessage)
+        return true
+      case 'delta':
+        handlers.onDelta?.(parsed.delta ?? '')
+        return true
+      case 'status':
+        handlers.onStatus?.(parsed as AgentStreamStatus)
+        return true
+      case 'done':
+        handlers.onDone?.()
+        return false
+      case 'error': {
+        const err = new Error(parsed.message ?? 'AI 对话失败')
+        handlers.onError?.(err)
+        throw err
+      }
+      default:
+        return true
+    }
+  }
+
+  const flushBuffer = (bufferRef: { current: string }): boolean => {
+    while (true) {
+      const boundary = bufferRef.current.indexOf('\n\n')
+      if (boundary === -1) {
+        return true
+      }
+      const rawEvent = bufferRef.current.slice(0, boundary)
+      bufferRef.current = bufferRef.current.slice(boundary + 2)
+      if (!rawEvent.trim()) {
+        continue
+      }
+      const shouldContinue = dispatchPayload(rawEvent)
+      if (!shouldContinue) {
+        return false
+      }
+    }
+  }
+
+  try {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(payload),
+      signal: controller.signal,
+      credentials: 'include',
+    })
+
+    if (!response.ok) {
+      const errorText = await response.text().catch(() => '')
+      throw new Error(errorText || '无法建立流式对话连接')
+    }
+
+    if (!response.body) {
+      throw new Error('当前浏览器不支持流式响应')
+    }
+
+    const reader = response.body.getReader()
+    const decoder = new TextDecoder('utf-8')
+    const bufferRef = { current: '' }
+    let continueStreaming = true
+
+    while (continueStreaming) {
+      const { value, done } = await reader.read()
+      if (done) {
+        break
+      }
+      bufferRef.current += decoder.decode(value, { stream: true })
+      continueStreaming = flushBuffer(bufferRef)
+    }
+
+    if (continueStreaming) {
+      bufferRef.current += decoder.decode()
+      continueStreaming = flushBuffer(bufferRef)
+      if (continueStreaming) {
+        handlers.onDone?.()
+      }
+    }
+  } catch (error) {
+    if (error instanceof Error) {
+      handlers.onError?.(error)
+    }
+    throw error
+  } finally {
+    controller.abort()
+  }
 }

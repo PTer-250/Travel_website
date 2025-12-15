@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import current_active_user as _current_active_user, fastapi_users
 from app.models.users import User
-from app.repositories import FacilityRepository, GraphRepository, RegionRepository
+from app.repositories import AgentRepository, FacilityRepository, GraphRepository, RegionRepository
 from app.repositories.diaries import DiaryRepository
 from app.repositories.session import get_session
 from app.repositories.users import UserRepository
@@ -18,6 +18,8 @@ from app.services import FacilityService, RecommendationService, RoutingService,
 from app.services.diary import DiaryService
 from app.services.media_storage import get_media_storage_service
 from app.services.map_data import MapDataService
+from app.services.agent import AgentService
+from app.services.xhs_search import XhsSearchService
 
 
 async def get_db_session() -> AsyncGenerator[AsyncSession, None]:
@@ -95,6 +97,16 @@ async def get_diary_service(
     return DiaryService(diary_repository, storage_service)
 
 
+async def get_agent_service(
+    session: AsyncSession = Depends(get_db_session),
+) -> AgentService:
+    """Provide the LangChain-powered agent service."""
+
+    agent_repo = AgentRepository(session)
+    xhs_search = XhsSearchService()
+    return AgentService(agent_repo, xhs_search)
+
+
 async def get_current_user(user: User = Depends(_current_active_user)) -> User:
     """Resolve the currently authenticated user via fastapi-users."""
     return user
@@ -114,6 +126,7 @@ __all__ = [
     "get_map_data_service",
     "get_search_service",
     "get_diary_service",
+    "get_agent_service",
     "get_current_user",
     "get_optional_current_user",
 ]

@@ -3,7 +3,7 @@ name = "travel-backend"
 version = "0.1.0"
 description = "Backend service for the personalized travel system"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11,<3.14"
 authors = [{ name = "Travel System Dev Team", email = "dev@example.com" }]
 dependencies = [
 	"fastapi>=0.111.0",
@@ -23,6 +23,11 @@ dependencies = [
 	"numpy>=2.2.6",
 	"faker>=37.8.0",
 	"fastapi-users[sqlalchemy]>=13.0.0",
+	"langchain>=0.2.16",
+	"langchain-openai>=0.2.6",
+	"requests>=2.32.5",
+	"loguru>=0.7.3",
+	"pyexecjs>=1.5.1",
 ]
 
 [project.optional-dependencies]

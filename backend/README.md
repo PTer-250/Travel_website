@@ -8,6 +8,7 @@
 
 	```powershell
 	uv sync
+	npm install
 	```
 
 2. **启动开发服务器**：

@@ -21,10 +21,11 @@
     "@tiptap/extension-underline": "^3.6.6",
     "@tiptap/starter-kit": "^3.6.6",
     "@tiptap/vue-3": "^3.6.6",
+    "@types/markdown-it": "^14.1.2",
     "@vue-leaflet/vue-leaflet": "^0.10.1",
     "axios": "^1.12.2",
-    "heic2any": "^0.0.4",
     "leaflet": "^1.9.4",
+    "markdown-it": "^14.1.0",
     "pinia": "^3.0.3",
     "vue": "^3.5.21",
     "vue-router": "^4.5.1"

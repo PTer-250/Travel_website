@@ -1,322 +1,338 @@
 <script setup lang="ts">
-import { ref, computed, nextTick } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { computed, nextTick, onMounted, ref } from 'vue'
+import { useChatStore, type ToolActivityEntry, type ToolActivityStatus } from '../../stores/chat'
+import type { AgentConversation, AgentMessage } from '../../types/agent'
+import MarkdownIt from 'markdown-it'
 
-interface ChatMessage {
-  id: string
-  type: 'user' | 'assistant'
-  content: string
-  timestamp: Date
-  suggestions?: string[]
-}
-
-interface Props {
-  currentRegion?: string
-  currentDiaryId?: number
-  contextData?: any
-}
-
-const props = defineProps<Props>()
-
-const route = useRoute()
-const router = useRouter()
-
-// 聊天相关状态
-const messages = ref<ChatMessage[]>([
-  {
-    id: '1',
-    type: 'assistant',
-    content: '你好！我是你的智能旅游助手。我可以帮你：\n\n🎯 推荐旅游目的地\n📝 参考他人日记\n🗺️ 规划游览路线\n🎪 寻找特色活动\n\n请告诉我你想去哪里玩，或者有什么具体的需求吧！',
-    timestamp: new Date(),
-    suggestions: [
-      '推荐一个适合周末的短途旅行目的地',
-      '我想去故宫，有什么游览建议吗？',
-      '帮我根据这篇日记规划路线',
-      '寻找美食推荐'
-    ]
-  }
-])
-
+const chatStore = useChatStore()
 const newMessage = ref('')
-const isLoading = ref(false)
+const chatContainerRef = ref<HTMLElement | null>(null)
+const showHistory = ref(false)
 
-// 快速回复建议
+const conversations = computed(() => chatStore.conversations)
+const messages = computed(() => chatStore.messages)
+const activeConversationId = computed(() => chatStore.activeConversationId)
+const loading = computed(() => chatStore.loading)
+const sending = computed(() => chatStore.sending)
+
+const md = new MarkdownIt({
+  html: false,
+  linkify: true,
+  breaks: true,
+})
+
 const quickSuggestions = [
   '推荐热门景点',
   '规划最佳路线',
   '寻找当地美食',
-  '了解交通方式',
-  '查看天气情况',
-  '获取门票信息'
+  '小红书上有什么攻略',
+  '推荐某个景点的路线',
 ]
 
-// 发送消息
-const sendMessage = async (content?: string) => {
-  const messageContent = content || newMessage.value.trim()
-  if (!messageContent) return
+onMounted(async () => {
+  await chatStore.init()
+  await nextTick(scrollToBottom)
+})
 
-  // 添加用户消息
-  const userMessage: ChatMessage = {
-    id: Date.now().toString(),
-    type: 'user',
-    content: messageContent,
-    timestamp: new Date()
-  }
-  messages.value.push(userMessage)
+const scrollToBottom = () => {
+  const el = chatContainerRef.value
+  if (!el) return
+  el.scrollTop = el.scrollHeight
+}
+
+const renderTime = (message: AgentMessage) => {
+  return new Date(message.created_at).toLocaleTimeString('zh-CN', {
+    hour: '2-digit',
+    minute: '2-digit',
+  })
+}
+
+const selectConversation = async (conversationId: number) => {
+  await chatStore.loadMessages(conversationId)
+  showHistory.value = false
+  await nextTick(scrollToBottom)
+}
+
+const startNewConversation = () => {
+  chatStore.startNewConversation()
   newMessage.value = ''
-  isLoading.value = true
-
-  // 模拟AI回复
-  await new Promise(resolve => setTimeout(resolve, 1000))
-  
-  const assistantMessage: ChatMessage = {
-    id: (Date.now() + 1).toString(),
-    type: 'assistant',
-    content: generateAIResponse(messageContent),
-    timestamp: new Date(),
-    suggestions: generateSuggestions(messageContent)
-  }
-  messages.value.push(assistantMessage)
-  isLoading.value = false
-
-  // 滚动到底部
-  nextTick(() => {
-    const chatContainer = document.getElementById('chat-messages')
-    if (chatContainer) {
-      chatContainer.scrollTop = chatContainer.scrollHeight
-    }
-  })
+  showHistory.value = false
 }
 
-// 生成AI回复内容
-const generateAIResponse = (userMessage: string): string => {
-  const lowerMessage = userMessage.toLowerCase()
-  
-  if (lowerMessage.includes('推荐') || lowerMessage.includes('去哪')) {
-    return `根据你的需求，我为你推荐几个热门目的地：
-
-🏔️ **黄山** - 奇松怪石，云海日出，绝美风光
-🏛️ **故宫** - 千年古都，历史文化浓厚
-🌸 **杭州西湖** - 诗意江南，风景如画
-🏔️ **张家界** - 奇峰异石，电影取景地
-
-你想了解哪个目的地的详细信息呢？`
-  } else if (lowerMessage.includes('路线') || lowerMessage.includes('规划')) {
-    return `我来帮你规划最佳游览路线！🗺️
-
-根据当前选定的区域，我建议：
-
-📍 **经典路线**（1-2天）：
-主要景点 → 最佳观景点 → 特色体验地 → 美食街区
-
-🚶‍♂️ **深度路线**（3-5天）：
-经典景点 → 周边探索 → 文化体验 → 休闲购物
-
-你想规划几天的行程呢？我可以根据你的时间和兴趣定制专属路线！`
-  } else if (lowerMessage.includes('美食') || lowerMessage.includes('吃')) {
-    return `美食推荐来啦！🍜
-
-🥘 **特色菜系**：
-- 本帮菜：红烧肉、白切鸡、糖醋排骨
-- 小吃：生煎包、小笼包、锅贴
-- 甜品：绿豆汤、酒酿圆子
-
-📍 **推荐餐厅**：
-- 老字号：本帮菜传承
-- 网红店：创意融合菜
-- 街头巷尾：地道小食
-
-你比较喜欢什么口味呢？我可以推荐具体的餐厅地址！`
-  } else {
-    return `我理解你想了解"${userMessage}"。
-
-作为你的旅游助手，我可以帮你：
-
-🎯 **目的地推荐** - 根据季节和兴趣推荐
-🗺️ **路线规划** - 定制专属行程  
-📝 **日记参考** - 看看其他游客的体验
-🎪 **活动推荐** - 当地特色活动
-🚗 **交通指南** - 怎么去最方便
-🏨 **住宿建议** - 住哪里最合适
-
-请告诉我更多具体信息，我会给出更精准的建议！`
+const toggleHistory = async () => {
+  showHistory.value = !showHistory.value
+  if (showHistory.value && !conversations.value.length) {
+    await chatStore.refreshConversations()
   }
 }
 
-// 生成快速回复建议
-const generateSuggestions = (userMessage: string): string[] => {
-  const lowerMessage = userMessage.toLowerCase()
-  
-  if (lowerMessage.includes('推荐')) {
-    return ['推荐热门景点', '推荐当地美食', '推荐住宿', '推荐交通方式']
-  } else if (lowerMessage.includes('路线')) {
-    return ['经典1日游', '深度2-3日游', '亲子游路线', '情侣游路线']
-  } else {
-    return ['查看地图位置', '了解开放时间', '获取门票信息', '联系客服']
+const sendMessage = async (content?: string) => {
+  const text = (content ?? newMessage.value).trim()
+  if (!text || sending.value) return
+  newMessage.value = ''
+  await chatStore.sendMessage(text)
+  await chatStore.refreshConversations()
+  await nextTick(scrollToBottom)
+}
+
+const activeConversation = computed<AgentConversation | null>(() => {
+  return conversations.value.find((item) => item.id === activeConversationId.value) ?? null
+})
+
+const badgeForRole = (role: AgentMessage['role']) => {
+  if (role === 'tool') return '工具'
+  if (role === 'assistant') return 'AI'
+  return '我'
+}
+
+const badgeForMessage = (message: AgentMessage) => {
+  if (message.role === 'assistant' && message.tool_call_id) {
+    return '工具'
   }
+  return badgeForRole(message.role)
 }
 
-// 跳转到搜索相关页面
-const searchDestination = (destination: string) => {
-  router.push({
-    name: 'diaries',
-    query: { search: destination }
-  })
+const toolActivityForMessage = (message: AgentMessage): ToolActivityEntry | null => {
+  if (!message.tool_call_id) {
+    return null
+  }
+  const conversationId = activeConversationId.value ?? message.conversation_id
+  const map = chatStore.toolActivities[conversationId]
+  return map?.[message.tool_call_id] ?? null
 }
 
-// 生成路线规划
-const generateRoute = () => {
-  if (props.currentDiaryId) {
-    router.push({
-      name: 'routing',
-      query: { from_diary: props.currentDiaryId }
+const renderAssistantMarkdown = (content: string) => {
+  return md.render(content || '')
+}
+
+const toolStatusClass = (status: ToolActivityStatus) => {
+  if (status === 'completed') return 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+  if (status === 'failed') return 'bg-rose-50 text-rose-700 border border-rose-200'
+  if (status === 'running') return 'bg-amber-50 text-amber-800 border border-amber-200'
+  return 'bg-slate-100 text-slate-600 border border-slate-200'
+}
+
+const formatToolArgs = (args?: Record<string, unknown> | null) => {
+  if (!args || Object.keys(args).length === 0) {
+    return '无参数'
+  }
+  return Object.entries(args)
+    .map(([key, value]) => {
+      if (typeof value === 'string') return `${key}: ${value}`
+      try {
+        return `${key}: ${JSON.stringify(value)}`
+      } catch {
+        return `${key}: ${String(value)}`
+      }
     })
-  } else {
-    router.push({ name: 'routing' })
-  }
+    .join('，')
 }
 
-// 清空聊天记录
-const clearChat = () => {
-  messages.value = [
-    {
-      id: '1',
-      type: 'assistant',
-      content: '聊天记录已清空。我是你的智能旅游助手，有什么可以帮助你的吗？',
-      timestamp: new Date()
-    }
-  ]
+const handleDeleteConversation = async (conversationId: number, event?: MouseEvent) => {
+  event?.stopPropagation()
+  const confirmed = window.confirm('确定删除该对话吗？')
+  if (!confirmed) return
+  try {
+    await chatStore.deleteConversation(conversationId)
+    await nextTick(scrollToBottom)
+  } catch (error) {
+    console.error(error)
+  }
 }
 </script>
 
 <template>
-  <div class="flex flex-col h-full bg-white rounded-2xl shadow-lg border border-slate-200">
-    <!-- 聊天头部 -->
-    <div class="flex items-center justify-between p-4 border-b border-slate-200 bg-gradient-to-r from-blue-50 to-indigo-50 rounded-t-2xl">
+  <div class="flex flex-col h-full gap-3">
+    <div class="relative bg-white rounded-2xl border border-slate-200 shadow-sm px-4 py-3 flex items-center justify-between">
       <div class="flex items-center gap-3">
-        <div class="flex h-10 w-10 items-center justify-center rounded-full bg-gradient-to-br from-blue-500 to-indigo-600 text-white text-lg font-bold">
-          AI
-        </div>
-        <div>
-          <h3 class="font-semibold text-slate-800">智能旅游助手</h3>
-          <p class="text-xs text-slate-500">在线 • 随时为您服务</p>
-        </div>
-      </div>
-      <div class="flex items-center gap-2">
         <button
-          @click="generateRoute"
-          class="p-2 rounded-lg hover:bg-white/50 text-slate-600 hover:text-blue-600 transition-colors"
-          title="生成路线"
+          class="inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-slate-200 bg-slate-50 hover:bg-blue-50 text-slate-700 hover:text-blue-700 transition"
+          @click="toggleHistory"
+          title="历史对话"
         >
-          <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7" />
+          <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 2m6-2a9 9 0 11-18 0 9 9 0 0118 0z" />
           </svg>
+          <span class="text-sm font-medium">历史对话</span>
         </button>
-        <button
-          @click="clearChat"
-          class="p-2 rounded-lg hover:bg-white/50 text-slate-600 hover:text-red-500 transition-colors"
-          title="清空聊天"
-        >
-          <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-          </svg>
-        </button>
+        <span class="text-xs text-slate-500">点击查看历史记录</span>
       </div>
-    </div>
+      <button
+        class="px-3 py-2 text-xs rounded-lg bg-blue-500 text-white hover:bg-blue-600 transition"
+        @click="startNewConversation"
+      >
+        新对话
+      </button>
 
-    <!-- 聊天消息区域 -->
-    <div id="chat-messages" class="flex-1 overflow-y-auto p-4 space-y-4">
       <div
-        v-for="message in messages"
-        :key="message.id"
-        class="flex"
-        :class="message.type === 'user' ? 'justify-end' : 'justify-start'"
+        v-if="showHistory"
+        class="absolute left-4 right-4 top-14 z-10 bg-white border border-slate-200 shadow-xl rounded-xl max-h-80 overflow-y-auto"
       >
         <div
-          class="max-w-[80%] rounded-2xl px-4 py-3"
-          :class="message.type === 'user'
-            ? 'bg-gradient-to-r from-blue-500 to-indigo-600 text-white'
-            : 'bg-slate-100 text-slate-800'"
+          v-for="conversation in conversations"
+          :key="conversation.id"
+          class="px-4 py-3 hover:bg-blue-50 cursor-pointer flex items-start gap-3"
+          :class="conversation.id === activeConversationId ? 'bg-blue-50' : ''"
+          @click="selectConversation(conversation.id)"
         >
-          <div class="whitespace-pre-wrap">{{ message.content }}</div>
-          <div
-            class="text-xs mt-2 opacity-70"
-            :class="message.type === 'user' ? 'text-blue-100' : 'text-slate-500'"
-          >
-            {{ message.timestamp.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }) }}
+          <div class="mt-1 text-slate-400">
+            <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 2m6-2a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
           </div>
-          
-          <!-- 建议回复 -->
-          <div v-if="message.suggestions && message.type === 'assistant'" class="mt-3 flex flex-wrap gap-2">
-            <button
-              v-for="suggestion in message.suggestions"
-              :key="suggestion"
-              @click="sendMessage(suggestion)"
-              class="px-3 py-1.5 text-xs font-medium rounded-full bg-white/80 hover:bg-white text-slate-700 hover:text-blue-600 transition-colors border border-slate-200"
-            >
-              {{ suggestion }}
-            </button>
-          </div>
-        </div>
-      </div>
-      
-      <!-- 加载指示器 -->
-      <div v-if="isLoading" class="flex justify-start">
-        <div class="bg-slate-100 rounded-2xl px-4 py-3">
-          <div class="flex items-center gap-2">
-            <div class="flex gap-1">
-              <div class="w-2 h-2 bg-slate-400 rounded-full animate-bounce"></div>
-              <div class="w-2 h-2 bg-slate-400 rounded-full animate-bounce" style="animation-delay: 0.1s"></div>
-              <div class="w-2 h-2 bg-slate-400 rounded-full animate-bounce" style="animation-delay: 0.2s"></div>
+          <div class="flex-1 min-w-0">
+            <div class="flex items-center justify-between gap-2">
+              <span class="font-medium text-slate-800 truncate">{{ conversation.title || '新对话' }}</span>
+              <span class="text-[11px] text-slate-500">{{ new Date(conversation.updated_at).toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' }) }}</span>
             </div>
-            <span class="text-sm text-slate-500">正在思考...</span>
+            <p class="text-sm text-slate-500 line-clamp-2">{{ conversation.last_message_preview || '暂无内容' }}</p>
+          </div>
+          <button
+            class="text-xs text-rose-500 hover:text-rose-600 px-2 py-1 rounded-lg"
+            @click="handleDeleteConversation(conversation.id, $event)"
+          >
+            删除
+          </button>
+        </div>
+        <div v-if="!conversations.length" class="px-4 py-3 text-sm text-slate-500">暂无历史对话</div>
+      </div>
+    </div>
+
+    <div class="flex-1 flex flex-col h-full bg-white rounded-2xl shadow-lg border border-slate-200">
+      <div class="flex items-center justify-between p-4 border-b border-slate-200 bg-gradient-to-r from-blue-50 to-indigo-50 rounded-t-2xl">
+        <div class="flex items-center gap-3">
+          <div class="flex h-10 w-10 items-center justify-center rounded-full bg-gradient-to-br from-blue-500 to-indigo-600 text-white text-lg font-bold">
+            AI
+          </div>
+          <div>
+            <h3 class="font-semibold text-slate-800">智能旅游助手</h3>
+            <p class="text-xs text-slate-500">
+              {{ activeConversation ? '正在对话' : '新对话' }}
+            </p>
+          </div>
+        </div>
+        <div class="flex items-center gap-2 text-xs text-slate-500">
+          <span v-if="loading">加载中...</span>
+          <span v-else-if="sending">发送中...</span>
+        </div>
+      </div>
+
+      <div ref="chatContainerRef" class="flex-1 overflow-y-auto p-4 space-y-4" id="chat-messages">
+        <div v-if="!messages.length" class="text-sm text-slate-500 bg-slate-50 border border-dashed border-slate-200 rounded-xl p-4">
+          开始与智能助手对话，历史会话会在这里出现。
+        </div>
+        <div
+          v-for="message in messages"
+          :key="message.id"
+          class="flex"
+          :class="message.role === 'user' ? 'justify-end' : 'justify-start'"
+        >
+          <div
+            class="max-w-[80%] rounded-2xl px-4 py-3 space-y-2"
+            :class="message.role === 'user'
+              ? 'bg-gradient-to-r from-blue-500 to-indigo-600 text-white'
+              : message.role === 'tool'
+                ? 'bg-amber-50 text-amber-900 border border-amber-200'
+                : (message.role === 'assistant' && message.tool_call_id)
+                  ? 'bg-slate-50 text-slate-800 border border-slate-200'
+                  : 'bg-slate-100 text-slate-800'"
+          >
+            <div class="flex items-center gap-2 text-xs opacity-80">
+              <span class="inline-flex items-center px-2 py-0.5 rounded-full border border-white/40 text-[11px]"
+                :class="message.role === 'tool' ? 'bg-white/70 text-amber-800 border-amber-200' : 'bg-white/30 text-white'"
+              >
+                {{ badgeForMessage(message) }}
+              </span>
+              <span :class="message.role === 'user' ? 'text-blue-100' : 'text-slate-500'">{{ renderTime(message) }}</span>
+            </div>
+
+            <template v-if="message.role === 'assistant' && message.tool_call_id">
+              <div class="space-y-1">
+                <div class="flex items-center justify-between gap-3">
+                  <span class="font-medium text-slate-800 truncate">
+                    {{ toolActivityForMessage(message)?.toolName || message.tool_name || '工具调用' }}
+                  </span>
+                  <span
+                    class="text-[11px] px-2 py-0.5 rounded-full"
+                    :class="toolStatusClass(toolActivityForMessage(message)?.status || 'pending')"
+                  >
+                    {{ toolActivityForMessage(message)?.label || '工具调用中' }}
+                  </span>
+                </div>
+                <p class="text-xs text-slate-500">
+                  参数：{{ formatToolArgs(toolActivityForMessage(message)?.toolArgs || message.tool_args) }}
+                </p>
+                <p v-if="toolActivityForMessage(message)?.toolOutputPreview" class="text-xs text-slate-600 line-clamp-2">
+                  结果：{{ toolActivityForMessage(message)?.toolOutputPreview }}
+                </p>
+                <p v-else-if="toolActivityForMessage(message)?.message" class="text-xs text-rose-600">
+                  异常：{{ toolActivityForMessage(message)?.message }}
+                </p>
+              </div>
+            </template>
+            <template v-else-if="message.role === 'assistant'">
+              <div class="leading-relaxed text-sm chat-markdown" v-html="renderAssistantMarkdown(message.content)"></div>
+            </template>
+            <template v-else>
+              <div class="whitespace-pre-wrap leading-relaxed text-sm">{{ message.content }}</div>
+            </template>
+          </div>
+        </div>
+
+        <div v-if="sending" class="flex justify-start">
+          <div class="bg-slate-100 rounded-2xl px-4 py-3">
+            <div class="flex items-center gap-2">
+              <div class="flex gap-1">
+                <div class="w-2 h-2 bg-slate-400 rounded-full animate-bounce"></div>
+                <div class="w-2 h-2 bg-slate-400 rounded-full animate-bounce" style="animation-delay: 0.1s"></div>
+                <div class="w-2 h-2 bg-slate-400 rounded-full animate-bounce" style="animation-delay: 0.2s"></div>
+              </div>
+              <span class="text-sm text-slate-500">正在思考...</span>
+            </div>
           </div>
         </div>
       </div>
-    </div>
 
-    <!-- 快速建议 -->
-    <div v-if="messages.length <= 2" class="px-4 py-3 border-t border-slate-200 bg-slate-50">
-      <div class="text-xs font-medium text-slate-600 mb-2">💡 快速开始</div>
-      <div class="flex flex-wrap gap-2">
-        <button
-          v-for="suggestion in quickSuggestions"
-          :key="suggestion"
-          @click="sendMessage(suggestion)"
-          class="px-3 py-1.5 text-xs font-medium rounded-full bg-white hover:bg-blue-50 text-slate-600 hover:text-blue-600 transition-colors border border-slate-200"
-        >
-          {{ suggestion }}
-        </button>
+      <div v-if="messages.length <= 1" class="px-4 py-3 border-t border-slate-200 bg-slate-50">
+        <div class="text-xs font-medium text-slate-600 mb-2">💡 快速开始</div>
+        <div class="flex flex-wrap gap-2">
+          <button
+            v-for="suggestion in quickSuggestions"
+            :key="suggestion"
+            @click="sendMessage(suggestion)"
+            class="px-3 py-1.5 text-xs font-medium rounded-full bg-white hover:bg-blue-50 text-slate-600 hover:text-blue-600 transition-colors border border-slate-200"
+          >
+            {{ suggestion }}
+          </button>
+        </div>
       </div>
-    </div>
 
-    <!-- 输入区域 -->
-    <div class="p-4 border-t border-slate-200 bg-white rounded-b-2xl">
-      <div class="flex gap-2">
-        <input
-          v-model="newMessage"
-          type="text"
-          placeholder="输入你想咨询的问题..."
-          class="flex-1 px-4 py-2 border border-slate-300 rounded-xl focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 outline-none transition"
-          @keyup.enter="sendMessage()"
-          :disabled="isLoading"
-        />
-        <button
-          @click="sendMessage()"
-          :disabled="isLoading || !newMessage.trim()"
-          class="px-4 py-2 bg-gradient-to-r from-blue-500 to-indigo-600 text-white rounded-xl hover:from-blue-600 hover:to-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
-        >
-          <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
-          </svg>
-        </button>
+      <div class="p-4 border-t border-slate-200 bg-white rounded-b-2xl">
+        <div class="flex gap-2">
+          <input
+            v-model="newMessage"
+            type="text"
+            placeholder="输入你想咨询的问题..."
+            class="flex-1 px-4 py-2 border border-slate-300 rounded-xl focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 outline-none transition"
+            @keyup.enter="sendMessage()"
+            :disabled="sending"
+          />
+          <button
+            @click="sendMessage()"
+            :disabled="sending || !newMessage.trim()"
+            class="px-4 py-2 bg-gradient-to-r from-blue-500 to-indigo-600 text-white rounded-xl hover:from-blue-600 hover:to-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+          >
+            <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
+            </svg>
+          </button>
+        </div>
       </div>
     </div>
   </div>
 </template>
 
 <style scoped>
-/* 自定义滚动条 */
 #chat-messages::-webkit-scrollbar {
   width: 4px;
 }
@@ -332,5 +348,25 @@ const clearChat = () => {
 
 #chat-messages::-webkit-scrollbar-thumb:hover {
   background: #94a3b8;
+}
+</style>
+
+<style scoped>
+.chat-markdown :deep(p) {
+  margin: 0.25rem 0;
+}
+
+.chat-markdown :deep(ul),
+.chat-markdown :deep(ol) {
+  padding-left: 1.25rem;
+  margin: 0.25rem 0;
+}
+
+.chat-markdown :deep(pre) {
+  overflow-x: auto;
+}
+
+.chat-markdown :deep(a) {
+  text-decoration: underline;
 }
 </style>

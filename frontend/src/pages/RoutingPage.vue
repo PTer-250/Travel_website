@@ -223,11 +223,9 @@ const {
   error: routeError,
   loading: routeLoading,
   execute: executeRoute,
-  reset: resetRouteRequest,
 } = useApiRequest(fetchRoutePlan)
 
 const plan = computed<RoutePlanResponse | null>(() => routeData.value ?? null)
-const allowedModes = computed(() => plan.value?.allowed_transport_modes ?? [])
 
 // 地图数据
 const mapTile = ref<MapFeatureCollection | null>(null)
@@ -341,16 +339,20 @@ const handleWaypointClear = (index: number) => {
 
 const moveWaypointUp = (index: number) => {
   if (index <= 0) return
-  const tmp = waypoints.value[index - 1]
-  waypoints.value[index - 1] = waypoints.value[index]
-  waypoints.value[index] = tmp
+  const prev = waypoints.value[index - 1]
+  const current = waypoints.value[index]
+  if (!prev || !current) return
+  waypoints.value[index - 1] = current
+  waypoints.value[index] = prev
 }
 
 const moveWaypointDown = (index: number) => {
   if (index >= waypoints.value.length - 1) return
-  const tmp = waypoints.value[index + 1]
-  waypoints.value[index + 1] = waypoints.value[index]
-  waypoints.value[index] = tmp
+  const next = waypoints.value[index + 1]
+  const current = waypoints.value[index]
+  if (!next || !current) return
+  waypoints.value[index + 1] = current
+  waypoints.value[index] = next
 }
 
 // 拖拽排序
@@ -374,6 +376,7 @@ const onWaypointDrop = (index: number, e: DragEvent) => {
   dragHoverIndex.value = null
   if (from === null || from === index) return
   const item = waypoints.value[from]
+  if (!item) return
   waypoints.value.splice(from, 1)
   waypoints.value.splice(index, 0, item)
 }
@@ -416,17 +419,6 @@ watch(
   },
   { deep: true }
 )
-
-const resetRouteForm = () => {
-  const defaults = createRoutingDefaults()
-  hydrateRouteForm(defaults)
-  preferencesStore.updateRouting(defaults)
-  resetRouteRequest()
-  selectedRegion.value = null
-  selectedStartNode.value = null
-  selectedEndNode.value = null
-  waypoints.value = []
-}
 
 const applySample = (index: number) => {
   const sample = SAMPLE_ROUTING_COMBINATIONS[index]
@@ -563,7 +555,7 @@ const applySample = (index: number) => {
             </div>
             <div class="space-y-2">
               <div
-                v-for="(wp, idx) in waypoints"
+                v-for="(_wp, idx) in waypoints"
                 :key="idx"
                 class="flex items-center gap-2"
                 :class="{ 'ring-2 ring-emerald-400 rounded-md bg-emerald-50': dragHoverIndex === idx, 'opacity-70': dragState.from === idx }"
@@ -577,10 +569,11 @@ const applySample = (index: number) => {
                 <div class="w-6 text-xs font-semibold text-slate-600 text-center">{{ idx + 1 }}</div>
                 <div class="flex-1">
                   <KeywordSearchSelect
-                    v-model="waypoints[idx]"
+                    :model-value="waypoints[idx] ?? null"
                     :search="searchStartNodeOptions"
                     placeholder="选择途经点"
                     :disabled="!routeForm.regionId"
+                    @update:modelValue="(value) => { if (value) waypoints[idx] = value as any }"
                     @select="(opt) => handleWaypointSelect(idx, opt)"
                     @clear="() => handleWaypointClear(idx)"
                   />

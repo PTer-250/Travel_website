@@ -31,6 +31,14 @@ from .diary import (
 	RegionSummary as DiaryRegionSummary,
 )
 from .user import UserPublic, UserCreateRequest, UserUpdateRequest
+from .agent import (
+	ConversationListResponse,
+	ConversationSummary,
+	ChatMessageRequest,
+	ChatMessage,
+	ChatResponse,
+	MessageListResponse,
+)
 
 __all__ = [
 	"RegionRecommendationItem",
@@ -68,4 +76,10 @@ __all__ = [
 	"UserPublic",
 	"UserCreateRequest",
 	"UserUpdateRequest",
+	"ConversationListResponse",
+	"ConversationSummary",
+	"ChatMessageRequest",
+	"ChatMessage",
+	"ChatResponse",
+	"MessageListResponse",
 ]

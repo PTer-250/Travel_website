@@ -2,7 +2,7 @@
 
 from fastapi import APIRouter
 
-from .endpoints import diaries, facilities, health, map_data, recommendations, routing, search
+from .endpoints import agent, diaries, facilities, health, map_data, recommendations, routing, search
 from .users_fastapi_users import router as users_router
 
 api_router = APIRouter(prefix="", tags=["v1"])
@@ -14,3 +14,4 @@ api_router.include_router(facilities.router)
 api_router.include_router(map_data.router)
 api_router.include_router(search.router)
 api_router.include_router(diaries.router)
+api_router.include_router(agent.router)

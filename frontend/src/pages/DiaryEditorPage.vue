@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, reactive, ref } from 'vue'
-import heic2any from 'heic2any'
 import { storeToRefs } from 'pinia'
 import { useRouter } from 'vue-router'
 import type { Editor } from '@tiptap/core'
@@ -244,12 +243,6 @@ const isHeicLike = (file: File): boolean => {
   return name.endsWith('.heic') || name.endsWith('.heif')
 }
 
-const convertHeicToJpeg = async (file: File): Promise<File> => {
-  const blob = (await heic2any({ blob: file, toType: 'image/jpeg', quality: 0.92 })) as Blob
-  const base = (file.name || 'upload').replace(/\.[^/.]+$/, '')
-  return new File([blob], `${base}.jpg`, { type: 'image/jpeg', lastModified: Date.now() })
-}
-
 const handleMediaFilesSelected = async (event: Event) => {
   const input = event.target as HTMLInputElement
   const instance = tiptapEditor.value
@@ -259,19 +252,12 @@ const handleMediaFilesSelected = async (event: Event) => {
 
   const files = Array.from(input.files)
   for (const originalFile of files) {
-    let file = originalFile
-    try {
-      if (isHeicLike(file)) {
-        file = await convertHeicToJpeg(file)
-      }
-    } catch (e) {
-      console.error('HEIC conversion failed', e)
-      mediaConvertError.value = 'HEIC/HEIF 图片当前浏览器无法直接预览，且转换失败。请将照片导出为 JPG/PNG 后再上传。'
-      // 转换失败时跳过该文件，避免插入灰块占位
+    if (isHeicLike(originalFile)) {
+      mediaConvertError.value = 'HEIC/HEIF 图片当前浏览器无法直接预览，请将照片导出为 JPG/PNG 后再上传。'
       continue
     }
 
-    const mediaType: DiaryMediaType = file.type.startsWith('video') ? 'video' : 'image'
+    const mediaType: DiaryMediaType = originalFile.type.startsWith('video') ? 'video' : 'image'
     const placeholder = generatePlaceholder(mediaType)
     // 生成与占位符绑定的安全文件名，避免泄露用户本地文件名
     const getSafeFilename = (
@@ -305,16 +291,16 @@ const handleMediaFilesSelected = async (event: Event) => {
       }
       return `${ph}.${ext}`
     }
-    const safeFilename = getSafeFilename(file, placeholder, mediaType)
+    const safeFilename = getSafeFilename(originalFile, placeholder, mediaType)
     const upload: DiaryMediaUpload = {
       placeholder,
       media_type: mediaType,
       // 使用安全文件名，杜绝原始文件名外泄
       filename: safeFilename,
-      content_type: file.type || undefined,
-      file,
+      content_type: originalFile.type || undefined,
+      file: originalFile,
     }
-    const previewUrl = URL.createObjectURL(file)
+    const previewUrl = URL.createObjectURL(originalFile)
 
     mediaUploads.value.push({ placeholder, type: mediaType, previewUrl, upload })
 
