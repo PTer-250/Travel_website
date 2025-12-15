@@ -48,3 +48,5 @@ frontend/.cache/
 Thumbs.db
 
 *.db
+
+backend/storage/media/
